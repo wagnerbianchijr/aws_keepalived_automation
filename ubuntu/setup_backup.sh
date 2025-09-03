@@ -7,6 +7,30 @@
 
 set -euo pipefail
 
+# ----------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------
+timestamp() {
+  date "+%b %d %H:%M:%S"
+}
+
+log_step() {
+  local msg="$1"
+  echo -n "$(timestamp) [INFO] $msg ... "
+}
+
+check_status() {
+  if [ $? -eq 0 ]; then
+    echo "OK"
+  else
+    echo "FAIL"
+    exit 1
+  fi
+}
+
+# ----------------------------------------------------------
+# Inputs
+# ----------------------------------------------------------
 echo "Enter ENI ID (from Master script output):"
 read ENI_ID
 echo "Enter the VIP (same as Master):"
@@ -15,48 +39,53 @@ echo "Enter the PEER IP (Master Node private IP):"
 read PEER_IP
 
 ROLE_NAME="KeepalivedENIRole"
-AUTH_PASS="S3cR3tP@"   # strong 8-char password
+AUTH_PASS="S3cR3tP@"
 
 # ----------------------------------------------------------
-# Get instance metadata (IMDSv2)
+# Metadata
 # ----------------------------------------------------------
+log_step "Fetching instance metadata"
 TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/instance-id)
 LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
   http://169.254.169.254/latest/meta-data/local-ipv4)
+check_status
 
 # ----------------------------------------------------------
-# Package check and install
+# Package check
 # ----------------------------------------------------------
 for pkg in keepalived awscli proxysql; do
+  log_step "Checking package '$pkg'"
   if dpkg -l | grep -qw "$pkg"; then
-    echo "✅ Package '$pkg' already installed, moving on..."
+    echo "already installed"
   else
-    echo "⚠️  Package '$pkg' is missing."
-    read -p "Do you want to install '$pkg'? (yes/no): " choice
+    echo "missing"
+    read -p "Install '$pkg'? (yes/no): " choice
     if [[ "$choice" == "yes" ]]; then
-      sudo apt update
-      sudo apt install -y "$pkg"
-      echo "✅ Installed '$pkg'."
+      sudo apt update && sudo apt install -y "$pkg"
+      check_status
     else
-      echo "❌ Package '$pkg' is required. Exiting."
+      echo "$(timestamp) [ERROR] Package '$pkg' is required. Exiting."
       exit 1
     fi
   fi
 done
 
 # ----------------------------------------------------------
-# IAM Role attachment
+# IAM Role
 # ----------------------------------------------------------
-aws iam create-instance-profile --instance-profile-name "$ROLE_NAME" || true
-aws iam add-role-to-instance-profile --instance-profile-name "$ROLE_NAME" --role-name "$ROLE_NAME" || true
-aws ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" --iam-instance-profile Name="$ROLE_NAME" || true
+log_step "Attaching IAM Role"
+aws iam create-instance-profile --instance-profile-name "$ROLE_NAME" >/dev/null 2>&1 || true
+aws iam add-role-to-instance-profile --instance-profile-name "$ROLE_NAME" --role-name "$ROLE_NAME" >/dev/null 2>&1 || true
+aws ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" --iam-instance-profile Name="$ROLE_NAME" >/dev/null 2>&1 || true
+check_status
 
 # ----------------------------------------------------------
 # eni-move.sh
 # ----------------------------------------------------------
+log_step "Deploying eni-move.sh"
 sudo tee /etc/keepalived/eni-move.sh > /dev/null <<EOF
 #!/bin/bash
 set -e
@@ -83,10 +112,12 @@ fi
 exit 0
 EOF
 sudo chmod 755 /etc/keepalived/eni-move.sh
+check_status
 
 # ----------------------------------------------------------
 # ProxySQL health check
 # ----------------------------------------------------------
+log_step "Deploying ProxySQL health check script"
 sudo tee /usr/local/bin/check-proxysql.sh > /dev/null <<'EOF'
 #!/bin/bash
 if nc -z 127.0.0.1 6033; then
@@ -96,10 +127,12 @@ else
 fi
 EOF
 sudo chmod 755 /usr/local/bin/check-proxysql.sh
+check_status
 
 # ----------------------------------------------------------
 # keepalived.conf
 # ----------------------------------------------------------
+log_step "Deploying keepalived.conf"
 sudo tee /etc/keepalived/keepalived.conf > /dev/null <<EOF
 global_defs {
     script_user root
@@ -147,13 +180,16 @@ vrrp_instance VI_1 {
     notify_fault  "/etc/keepalived/eni-move.sh detach"
 }
 EOF
+check_status
 
 # ----------------------------------------------------------
 # Service start
 # ----------------------------------------------------------
+log_step "Enabling and starting Keepalived"
 sudo systemctl daemon-reload
 sudo systemctl enable keepalived
 sudo systemctl restart keepalived
+check_status
 
 # ----------------------------------------------------------
 # Summary
@@ -167,4 +203,3 @@ echo " ENI         : $ENI_ID"
 echo " VIP         : $VIP"
 echo " Keepalived  : priority 100, nopreempt"
 echo "--------------------------------------------------"
-
