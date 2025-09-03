@@ -87,15 +87,3 @@ Please fork this repository, open a feature branch, and submit a pull request.
 ## License
 
 This project is licensed under the **MIT License** — see the [LICENSE](./LICENSE) file for details.
-
----
-
-✅ With these badges, your repo now looks like a **full open-source project**:
-
-* Stack-specific (Ubuntu, AWS, Keepalived, ProxySQL)
-* Build/Status
-* License
-* Contributions
-
-
-
