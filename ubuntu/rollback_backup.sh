@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =========================
+# Logging helper
+# =========================
+log() {
+  echo "$(date '+%b %d %H:%M:%S') [$1] $2"
+}
+
+# =========================
+# AWS CLI uninstall helper
+# =========================
+uninstall_awscli() {
+  if dpkg -s awscli >/dev/null 2>&1; then
+    log INFO "Purging awscli (APT package)..."
+    apt purge -y awscli || true
+  fi
+
+  for d in /usr/local/aws-cli /usr/local/aws /usr/share/aws-cli /tmp/aws /tmp/awscli*; do
+    if [[ -d "$d" ]]; then
+      log INFO "Removing $d"
+      rm -rf "$d"
+    fi
+  done
+
+  for f in /usr/local/bin/aws /usr/local/bin/aws_completer /usr/bin/aws_completer /usr/bin/aws; do
+    if [[ -L "$f" || -f "$f" ]]; then
+      log INFO "Removing $f"
+      rm -f "$f"
+    fi
+  done
+
+  for c in /etc/bash_completion.d/aws_completer /usr/share/zsh/site-functions/_aws; do
+    if [[ -f "$c" ]]; then
+      log INFO "Removing $c"
+      rm -f "$c"
+    fi
+  done
+}
+
+# =========================
+# Rollback steps
+# =========================
+
+# 1. Stop and disable Keepalived
+if systemctl is-active --quiet keepalived; then
+  log INFO "Stopping Keepalived..."
+  systemctl stop keepalived
+fi
+if systemctl is-enabled --quiet keepalived; then
+  log INFO "Disabling Keepalived..."
+  systemctl disable keepalived
+fi
+
+# 2. Remove Keepalived config and scripts
+if [[ -f /etc/keepalived/keepalived.conf ]]; then
+  log INFO "Removing /etc/keepalived/keepalived.conf"
+  rm -f /etc/keepalived/keepalived.conf
+fi
+if [[ -f /etc/keepalived/eni-move.sh ]]; then
+  log INFO "Removing /etc/keepalived/eni-move.sh"
+  rm -f /etc/keepalived/eni-move.sh
+fi
+
+# 3. Delete ENI (requires ENI_ID)
+if [[ $# -ge 1 ]]; then
+  ENI_ID="$1"
+  log INFO "Attempting to delete ENI $ENI_ID"
+  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces \
+    --network-interface-ids "$ENI_ID" \
+    --query "NetworkInterfaces[0].Attachment.AttachmentId" \
+    --output text 2>/dev/null || echo "None")
+
+  if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
+    log INFO "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
+    aws ec2 detach-network-interface --attachment-id "$ATTACHMENT_ID" --force || true
+    sleep 5
+  fi
+
+  log INFO "Deleting ENI $ENI_ID"
+  aws ec2 delete-network-interface --network-interface-id "$ENI_ID" || {
+    log ERROR "Failed to delete ENI $ENI_ID"
+  }
+else
+  log INFO "No ENI_ID provided, skipping ENI deletion"
+  log INFO "Usage: $0 <eni-id>"
+fi
+
+# 4. Optional cleanup of packages
+read -rp "Do you want to purge ProxySQL, Keepalived, and AWS CLI packages? [y/N]: " yn
+if [[ $yn =~ ^[Yy]$ ]]; then
+  log INFO "Purging ProxySQL, Keepalived, and AWS CLI..."
+  apt purge -y proxysql keepalived || true
+  apt autoremove -y || true
+  uninstall_awscli
+else
+  log INFO "Leaving ProxySQL, Keepalived, and AWS CLI installed"
+fi
+
+log INFO "Rollback complete."
