@@ -1,0 +1,34 @@
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux/Unix temp files
+*~
+*.swp
+*.swo
+*.bak
+*.tmp
+
+# Logs
+*.log
+*.out
+*.err
+
+# Python cache (if you add Python tooling later)
+__pycache__/
+*.pyc
+
+# Vim/Emacs
+# (if you use them, avoids editor cruft being committed)
+*#
+.#*
+
+# Ubuntu package manager lists
+*.deb
+
+# Local scripts not meant for git
+ubuntu/rollback_master.sh
+
+# AWS CLI cached data
+.aws/
