@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+
+# =============================================================================
+# Script Name : rollback_master.sh
+# Author      : Bianchi (bianchi@readyset.io)
+# Version     : v0.1
+# Date        : 2025-09-11
+# Description : Roll back MASTER setup (Keepalived/ProxySQL/AWS CLI, optional ENI delete).
+# =============================================================================
+
 set -euo pipefail
 
 # =========================

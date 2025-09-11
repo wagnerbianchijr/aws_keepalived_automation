@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 
+# =============================================================================
+# Script Name : setup_master.sh
+# Author      : Bianchi (bianchi@readyset.io)
+# Version     : v0.1
+# Date        : 2025-09-11
+# Description : Bootstrap MASTER node with Keepalived, ENI, and ProxySQL.
+# =============================================================================
+
 set -euo pipefail
 
 # =========================
