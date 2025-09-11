@@ -1,5 +1,12 @@
 # High Availability on AWS with EC2, Keepalived, ENI, and ProxySQL
 
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04-E95420?logo=ubuntu\&logoColor=white)
+![AWS](https://img.shields.io/badge/AWS-EC2%20%7C%20ENI-FF9900?logo=amazon-aws\&logoColor=white)
+![Keepalived](https://img.shields.io/badge/Keepalived-v2.2.8-blue)
+![ProxySQL](https://img.shields.io/badge/ProxySQL-2.x-green)
+![AWS CLI](https://img.shields.io/badge/AWS%20CLI-Required-orange?logo=amazon-aws\&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Draft-yellow)
+
 This repository provides scripts to bootstrap **high availability** on AWS using:
 
 * **Keepalived** for VRRP failover
