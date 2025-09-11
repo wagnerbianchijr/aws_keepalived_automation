@@ -71,7 +71,7 @@ if [[ $yn =~ ^[Yy]$ ]]; then
       sudo apt purge -y awscli || true
     elif [[ "$AWS_PATH" == "/usr/local/bin/aws" ]]; then
       log INFO "Removing AWS CLI v2 installed via zip..."
-      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws
+      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws /tmp/aws /tmp/awscli*
     else
       log INFO "AWS CLI found at $AWS_PATH (not managed by apt), leaving it in place"
     fi
