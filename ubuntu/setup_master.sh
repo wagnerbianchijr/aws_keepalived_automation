@@ -1,224 +1,224 @@
 #!/bin/bash
-# ==========================================================
-# Setup script for MASTER node
-# - Creates ENI
-# - Configures Keepalived with ENI failover and ProxySQL check
-# - Written by Wagner Bianchi - bianchi@readyset.io
-# ==========================================================
+set -e
 
-set -euo pipefail
-
-# ----------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------
-timestamp() {
-  date "+%b %d %H:%M:%S"
+# ================
+# Logging function
+# ================
+log() {
+  local level="$1"; shift
+  local msg="$*"
+  local ts
+  ts=$(date +"%b %d %H:%M:%S")
+  echo "$ts [$level] $msg"
 }
 
-log_step() {
-  local msg="$1"
-  echo -n "$(timestamp) [INFO] $msg ... "
-}
-
-check_status() {
-  if [ $? -eq 0 ]; then
-    echo "OK"
+# ==========================
+# Check if package installed
+# ==========================
+check_package() {
+  local pkg="$1"
+  if dpkg -s "$pkg" >/dev/null 2>&1; then
+    log INFO "Package $pkg already installed"
+    return 0
   else
-    echo "FAIL"
-    exit 1
+    return 1
   fi
 }
 
-# ----------------------------------------------------------
-# Inputs
-# ----------------------------------------------------------
-echo "Enter the VIP (e.g., 172.31.38.213):"
-read VIP
-echo "Enter ENI description:"
-read ENI_DESC
-echo "Enter Subnet ID (e.g., subnet-xxxx):"
-read SUBNET_ID
-echo "Enter Security Group ID (e.g., sg-xxxx):"
-read SG_ID
-echo "Enter the PEER IP (Backup Node private IP):"
-read PEER_IP
+# ==========================
+# Install keepalived
+# ==========================
+install_keepalived() {
+  if ! check_package keepalived; then
+    log INFO "Installing keepalived..."
+    apt-get update -y && apt-get install -y keepalived
+    log INFO "keepalived installation complete"
+  fi
+}
 
-ROLE_NAME="KeepalivedENIRole"
-AUTH_PASS="S3cR3tP@"   # strong 8-char password
+# ==========================
+# Install ProxySQL
+# ==========================
+install_proxysql() {
+  if ! command -v proxysql >/dev/null 2>&1; then
+    log INFO "ProxySQL not found, installing latest release from GitHub..."
+    LATEST_URL=$(curl -s https://api.github.com/repos/sysown/proxysql/releases/latest \
+      | grep "browser_download_url.*deb" | grep ubuntu24 | cut -d '"' -f 4 | head -n 1)
 
-# ----------------------------------------------------------
-# Metadata
-# ----------------------------------------------------------
-log_step "Fetching instance metadata"
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/instance-id)
-LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/local-ipv4)
-check_status
-
-# ----------------------------------------------------------
-# Package check
-# ----------------------------------------------------------
-for pkg in keepalived awscli proxysql; do
-  log_step "Checking package '$pkg'"
-  if dpkg -l | grep -qw "$pkg"; then
-    echo "already installed"
-  else
-    echo "missing"
-    read -p "Install '$pkg'? (yes/no): " choice
-    if [[ "$choice" == "yes" ]]; then
-      sudo apt update && sudo apt install -y "$pkg"
-      check_status
-    else
-      echo "$(timestamp) [ERROR] Package '$pkg' is required. Exiting."
+    if [[ -z "$LATEST_URL" ]]; then
+      log ERROR "Could not fetch latest ProxySQL release URL"
       exit 1
     fi
+
+    TMP_DEB="/tmp/proxysql_latest.deb"
+    curl -L "$LATEST_URL" -o "$TMP_DEB"
+    apt-get update -y && apt-get install -y libmariadb3
+    dpkg -i "$TMP_DEB" || apt-get install -f -y
+    rm -f "$TMP_DEB"
+    log INFO "ProxySQL installation complete"
+  else
+    VERSION=$(proxysql --version 2>/dev/null || true)
+    log INFO "ProxySQL already installed: $VERSION"
   fi
-done
+}
 
-# ----------------------------------------------------------
-# Create ENI
-# ----------------------------------------------------------
-log_step "Creating ENI"
-ENI_ID=$(aws ec2 create-network-interface \
-  --subnet-id "$SUBNET_ID" \
-  --groups "$SG_ID" \
-  --description "$ENI_DESC" \
-  --private-ip-address "$VIP" \
-  --query "NetworkInterface.NetworkInterfaceId" \
-  --output text)
-check_status
+# ==========================
+# Install AWS CLI v2
+# ==========================
+install_awscli() {
+  if ! command -v aws >/dev/null 2>&1; then
+    log INFO "Installing AWS CLI v2..."
+    apt-get update -y && apt-get install -y unzip curl
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install --update
+    rm -rf /tmp/aws /tmp/awscliv2.zip
+    log INFO "AWS CLI v2 installation complete"
+  else
+    VERSION=$(aws --version 2>&1)
+    log INFO "AWS CLI found: $VERSION"
+  fi
+}
 
-# ----------------------------------------------------------
-# IAM Role
-# ----------------------------------------------------------
-log_step "Attaching IAM Role"
-aws iam create-instance-profile --instance-profile-name "$ROLE_NAME" >/dev/null 2>&1 || true
-aws iam add-role-to-instance-profile --instance-profile-name "$ROLE_NAME" --role-name "$ROLE_NAME" >/dev/null 2>&1 || true
-aws ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" --iam-instance-profile Name="$ROLE_NAME" >/dev/null 2>&1 || true
-check_status
-
-# ----------------------------------------------------------
-# eni-move.sh
-# ----------------------------------------------------------
-log_step "Deploying eni-move.sh"
-sudo tee /etc/keepalived/eni-move.sh > /dev/null <<EOF
+# ==========================
+# Deploy eni-move.sh
+# ==========================
+deploy_eni_script() {
+  local eni_id="$1"
+  cat > /etc/keepalived/eni-move.sh <<EOF
 #!/bin/bash
 set -e
-export PATH=/usr/local/bin:/usr/bin:/bin
-ENI_ID="$ENI_ID"
+PATH=/usr/local/bin:/usr/bin:/bin
+ENI_ID=$eni_id
 AWS_BIN=\$(which aws)
-TOKEN=\$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+TOKEN=\$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
 INSTANCE_ID=\$(curl -s -H "X-aws-ec2-metadata-token: \$TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
 ACTION=\$1
-if [ "\$ACTION" = "attach" ]; then
-  ATTACHMENT_ID=\$(\$AWS_BIN ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-  ATTACHED_TO=\$(\$AWS_BIN ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
-  if [ "\$ATTACHED_TO" != "None" ] && [ "\$ATTACHED_TO" != "\$INSTANCE_ID" ]; then
-    \$AWS_BIN ec2 detach-network-interface --attachment-id \$ATTACHMENT_ID --force
+
+log() {
+  ts=\$(date +"%b %d %H:%M:%S")
+  echo "\$ts Keepalived: \$*"
+  logger "Keepalived: \$*"
+}
+
+if [[ "\$ACTION" == "attach" ]]; then
+  ATTACHMENT_ID=\$("\$AWS_BIN" ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+  ATTACHED_TO=\$("\$AWS_BIN" ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
+
+  if [[ "\$ATTACHED_TO" != "None" && "\$ATTACHED_TO" != "\$INSTANCE_ID" ]]; then
+    log "Detaching ENI \$ENI_ID from \$ATTACHED_TO"
+    "\$AWS_BIN" ec2 detach-network-interface --attachment-id \$ATTACHMENT_ID --force
     sleep 5
   fi
-  \$AWS_BIN ec2 attach-network-interface --network-interface-id \$ENI_ID --instance-id \$INSTANCE_ID --device-index 1
-elif [ "\$ACTION" = "detach" ]; then
-  ATTACHMENT_ID=\$(\$AWS_BIN ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-  if [ "\$ATTACHMENT_ID" != "None" ]; then
-    \$AWS_BIN ec2 detach-network-interface --attachment-id \$ATTACHMENT_ID --force
+
+  log "Attaching ENI \$ENI_ID to \$INSTANCE_ID"
+  "\$AWS_BIN" ec2 attach-network-interface --network-interface-id \$ENI_ID --instance-id \$INSTANCE_ID --device-index 1
+elif [[ "\$ACTION" == "detach" ]]; then
+  ATTACHMENT_ID=\$("\$AWS_BIN" ec2 describe-network-interfaces --network-interface-ids \$ENI_ID --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+  if [[ "\$ATTACHMENT_ID" != "None" ]]; then
+    log "Detaching ENI \$ENI_ID"
+    "\$AWS_BIN" ec2 detach-network-interface --attachment-id \$ATTACHMENT_ID --force
   fi
 fi
-exit 0
 EOF
-sudo chmod 755 /etc/keepalived/eni-move.sh
-check_status
+  chmod +x /etc/keepalived/eni-move.sh
+  log INFO "Deployed eni-move.sh for ENI $eni_id"
+}
 
-# ----------------------------------------------------------
-# ProxySQL health check
-# ----------------------------------------------------------
-log_step "Deploying ProxySQL health check script"
-sudo tee /usr/local/bin/check-proxysql.sh > /dev/null <<'EOF'
-#!/bin/bash
-if nc -z 127.0.0.1 6033; then
-  exit 0
-else
-  exit 1
-fi
-EOF
-sudo chmod 755 /usr/local/bin/check-proxysql.sh
-check_status
+# ==========================
+# Deploy keepalived.conf
+# ==========================
+deploy_keepalived_conf() {
+  local vip="$1"
+  local peer_ip="$2"
 
-# ----------------------------------------------------------
-# keepalived.conf
-# ----------------------------------------------------------
-log_step "Deploying keepalived.conf"
-sudo tee /etc/keepalived/keepalived.conf > /dev/null <<EOF
+  cat > /etc/keepalived/keepalived.conf <<EOF
 global_defs {
     script_user root
     enable_script_security
 }
 
 vrrp_script chk_proxysql {
-    script "/usr/local/bin/check-proxysql.sh"
+    script "/usr/bin/nc -z 127.0.0.1 6033"
     interval 2
     timeout 2
-    fall 2
     rise 2
-    weight -30
-    user root
+    fall 2
 }
 
 vrrp_instance VI_1 {
-    state BACKUP
+    state MASTER
     interface ens5
     virtual_router_id 51
     priority 101
-    advert_int 2
+    advert_int 1
     nopreempt
-    garp_master_delay 5
-
     authentication {
         auth_type PASS
-        auth_pass $AUTH_PASS
+        auth_pass S3cR3tP@
     }
-
-    unicast_src_ip $LOCAL_IP
+    unicast_src_ip $(hostname -I | awk '{print $1}')
     unicast_peer {
-        $PEER_IP
+        $peer_ip
     }
-
-    virtual_ipaddress {
-        $VIP dev ens5
-    }
-
-    track_interface { ens5 }
-    track_script { chk_proxysql }
-
     notify_master "/etc/keepalived/eni-move.sh attach"
     notify_backup "/etc/keepalived/eni-move.sh detach"
     notify_fault  "/etc/keepalived/eni-move.sh detach"
+    track_script {
+        chk_proxysql
+    }
+    virtual_ipaddress {
+        $vip
+    }
 }
 EOF
-check_status
+  log INFO "Deployed keepalived.conf with VIP $vip and peer $peer_ip"
+}
 
-# ----------------------------------------------------------
-# Service start
-# ----------------------------------------------------------
-log_step "Enabling and starting Keepalived"
-sudo systemctl daemon-reload
-sudo systemctl enable keepalived
-sudo systemctl restart keepalived
-check_status
+# ==========================
+# Main execution
+# ==========================
+log INFO "Starting setup on MASTER node"
 
-# ----------------------------------------------------------
-# Summary
-# ----------------------------------------------------------
-echo "--------------------------------------------------"
-echo " MASTER NODE SETUP COMPLETE"
-echo " Instance ID : $INSTANCE_ID"
-echo " Local IP    : $LOCAL_IP"
-echo " Peer IP     : $PEER_IP"
-echo " VIP         : $VIP"
-echo " ENI ID      : $ENI_ID"
-echo " Keepalived  : priority 101, nopreempt"
-echo "--------------------------------------------------"
-echo "👉 Copy the ENI ID above and use it when running setup_backup.sh"
+install_keepalived
+install_proxysql
+install_awscli
+
+read -rp "Enter VIP (e.g. 172.31.40.200): " VIP
+read -rp "Enter ENI description: " ENI_DESC
+read -rp "Enter Subnet ID: " SUBNET_ID
+read -rp "Enter Security Group ID: " SG_ID
+read -rp "Enter Backup node private IP: " PEER_IP
+
+# Create ENI
+ENI_ID=$(aws ec2 create-network-interface \
+  --subnet-id "$SUBNET_ID" \
+  --groups "$SG_ID" \
+  --description "$ENI_DESC" \
+  --private-ip-address "$VIP" \
+  --tag-specifications 'ResourceType=network-interface,Tags=[{Key=ha:managed,Value=true}]' \
+  --query 'NetworkInterface.NetworkInterfaceId' \
+  --output text)
+
+log INFO "Created ENI with ID $ENI_ID"
+
+# Deploy configs
+deploy_eni_script "$ENI_ID"
+deploy_keepalived_conf "$VIP" "$PEER_IP"
+
+# Start keepalived
+log INFO "Starting keepalived service"
+systemctl enable keepalived
+systemctl restart keepalived
+
+# Wait for ENI/VIP to appear
+log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
+for i in {1..15}; do
+  if ip -br a | grep -q "$VIP"; then
+    log INFO "ENI $ENI_ID successfully attached, VIP $VIP is active."
+    break
+  fi
+  sleep 2
+done
+
+log INFO "MASTER setup complete. ENI ID = $ENI_ID"
