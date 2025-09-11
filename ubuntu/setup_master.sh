@@ -77,19 +77,19 @@ main() {
   install_proxysql
 
   # Gather user input with defaults
-  read -rp "Enter VIP (default: 172.31.40.200): " VIP
+  read -rp "Enter VIP (e.g. 172.31.40.200): " VIP
   VIP=${VIP:-172.31.40.200}
 
-  read -rp "Enter ENI description (default: Keepalived ENI): " ENI_DESC
+  read -rp "Enter ENI description (e.g. Keepalived ENI): " ENI_DESC
   ENI_DESC=${ENI_DESC:-"Keepalived ENI"}
 
-  read -rp "Enter Subnet ID (default: subnet-1ea42441): " SUBNET_ID
+  read -rp "Enter Subnet ID (e.g. subnet-1ea42441): " SUBNET_ID
   SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
 
-  read -rp "Enter Security Group ID (default: sg-0aba3ccd66cf6ea50): " SG_ID
+  read -rp "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): " SG_ID
   SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
 
-  read -rp "Enter Backup node private IP (default: 172.31.47.224): " PEER_IP
+  read -rp "Enter Backup node private IP (e.g. 172.31.47.224): " PEER_IP
   PEER_IP=${PEER_IP:-172.31.47.224}
 
   # Get instance-id with IMDSv2
