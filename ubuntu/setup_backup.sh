@@ -12,7 +12,39 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 
-log(){ echo "$(date '+%b %d %H:%M:%S') [$1] $2"; }
+log(){ 
+  echo "$(date '+%b %d %H:%M:%S') [$1] $2";
+}
+
+# =============================================================================
+# In order for the Keepalived service to forward network packets properly 
+# to the real servers, each router node must have IP forwarding turned on
+# in the kernel.
+# =============================================================================
+enable_ip_forward() {
+  
+  if sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
+    
+    current_value=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)
+
+    if [ "$current_value" -eq 1 ]; then
+      log INFO "Setting net.ipv4.ip_forward as 1."
+      return 0
+    else
+      log ERROR "Failed to set net.ipv4.ip_forward (current value: $current_value)"
+      return 1
+    fi
+  else
+    log ERROR "Error: could not set net.ipv4.ip_forward"
+    return 1
+  fi
+}
+
+# Enable the ip_forward kernel variable
+enable_ip_forward || {
+  log ERROR "Please enable IP forwarding manually and re-run the script."
+  exit 1
+}
 
 # ---- root check
 if [[ $EUID -ne 0 ]]; then
@@ -40,8 +72,8 @@ install_awscli(){
   fi
   log INFO "Installing AWS CLI v2 ..."
   curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-  unzip -q /tmp/awscliv2.zip -d /tmp
-  /tmp/aws/install
+  unzip -qq /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
+  sudo /tmp/aws/install >/dev/null 2>&1
   log INFO "AWS CLI installed successfully"
 }
 
@@ -54,18 +86,17 @@ install_proxysql(){
   log INFO "ProxySQL not found, installing latest release from GitHub..."
   # robust match for any amd64 .deb
   local url
-  url=$(curl -s https://api.github.com/repos/sysown/proxysql/releases/latest \
-      | jq -r '.assets[] | select(.name | test("proxysql_.*_amd64\\.deb$")).browser_download_url' | head -n1)
+  url=$(curl -S -s https://api.github.com/repos/sysown/proxysql/releases/latest \
+      | jq -r '.assets[] | select(.name | test("proxysql_.*_amd64\\.deb$")).browser_download_url' | head -n1) >/dev/null 2>&1
 
   if [[ -z "$url" || "$url" == "null" ]]; then
     log ERROR "Unable to determine latest ProxySQL release URL"
     exit 1
   fi
 
-  curl -Ls "$url" -o /tmp/proxysql-latest.deb
-  # libaio-dev provides the needed runtime on 24.04
+  curl -S -Ls "$url" -o /tmp/proxysql-latest.deb >/dev/null 2>&1
   apt-get -qq install -y libaio-dev >/dev/null || true
-  dpkg -i /tmp/proxysql-latest.deb || apt-get -qq -f install -y >/dev/null
+  dpkg -i /tmp/proxysql-latest.deb || apt-get -qq -f install -y >/dev/null 2>&1
   log INFO "ProxySQL installed successfully"
 
   if ! systemctl is-active --quiet proxysql; then
@@ -83,23 +114,24 @@ install_pkg jq
 install_pkg unzip
 install_pkg netcat-openbsd   # provides /usr/bin/nc
 
+# ---- install AWS CLI and ProxySQL
 install_awscli
 install_proxysql
 
 # ---- gather input (with sensible defaults)
-read -rp "=> Enter ENI ID (from Master setup): " ENI_ID
+read -rp $'\e[1m=> Enter ENI ID (from Master setup): \e[0m' ENI_ID
 
-read -rp "=> Enter VIP (same as MASTER) (e.g. 172.31.40.200): " VIP 
+read -rp $'\e[1m=> Enter VIP (same as MASTER) (e.g. 172.31.40.200): \e[0m' VIP 
 VIP=${VIP:-172.31.40.200}
 
-read -rp "=> Enter MASTER node private IP (e.g. 172.31.32.209): " PEER_IP 
+read -rp $'\e[1m=> Enter MASTER node private IP (e.g. 172.31.32.209): \e[0m' PEER_IP 
 PEER_IP=${PEER_IP:-172.31.32.209}
 
-read -rp "=> Enter the Network Interface name (e.g. ens5): " IFACE
+read -rp $'\e[1m=> Enter the Network Interface name (e.g. ens5): \e[0m' IFACE
 IFACE=${IFACE:-ens5}
 
 # ---- ensure keepalived dir exists
-install -d -m 0755 /etc/keepalived
+[ -d /etc/keepalived ] || install -d -m 0755 /etc/keepalived
 
 # ---- eni-move.sh
 cat >/etc/keepalived/eni-move.sh <<'EOF'
@@ -240,11 +272,12 @@ THIS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
 THIS_INSTANCE=$(curl -s -H "X-aws-ec2-metadata-token: $THIS_TOKEN" \
   http://169.254.169.254/latest/meta-data/instance-id)
 
-log INFO "Checking ENI $ENI_ID attachment..."
-aws ec2 describe-network-interfaces \
-  --network-interface-ids "$ENI_ID" \
-  --query "NetworkInterfaces[0].{ENI:NetworkInterfaceId,Instance:Attachment.InstanceId,Status:Status,PrivateIp:PrivateIpAddress}" \
-  --output table || true
+#log INFO "Checking ENI $ENI_ID attachment..."
+#aws ec2 describe-network-interfaces \
+#  --network-interface-ids "$ENI_ID" \
+#  --query "NetworkInterfaces[0].{ENI:NetworkInterfaceId,Instance:Attachment.InstanceId,Status:Status,PrivateIp:PrivateIpAddress}" \
+#  --output table || true
 
 log INFO "This node instance-id: $THIS_INSTANCE"
-log INFO "BACKUP setup complete."
+log INFO "You can follow the logs with the journalctl -f -u keepalived command."
+log INFO $'\e[1mBACKUP setup complete.\e[0m'
