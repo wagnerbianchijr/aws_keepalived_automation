@@ -17,6 +17,36 @@ log() {
   echo "$(date '+%b %d %H:%M:%S') [$1] $2"
 }
 
+# =============================================================================
+# In order for the Keepalived service to forward network packets properly 
+# to the real servers, each router node must have IP forwarding turned on
+# in the kernel.
+# =============================================================================
+enable_ip_forward() {
+  # Try to set ip_forward to 1
+  if sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
+    # Now check if it was applied successfully
+    current_value=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)
+
+    if [ "$current_value" -eq 1 ]; then
+      log INFO "The net.ipv4.ip_forward kernel variable was successfully set to 1"
+      return 0
+    else
+      log ERROR "Failed to set net.ipv4.ip_forward (current value: $current_value)"
+      return 1
+    fi
+  else
+    log ERROR "Error: could not set net.ipv4.ip_forward"
+    return 1
+  fi
+}
+
+# Enable the ip_forward kernel variable
+enable_ip_forward || {
+  log ERROR "Please enable IP forwarding manually and re-run the script."
+  exit 1
+}
+
 # =========================
 # Package installer
 # =========================
@@ -86,26 +116,26 @@ main() {
   install_proxysql
 
   # Gather user input with defaults
-  read -rp "=> Enter VIP (e.g. 172.31.40.200): " VIP
-  VIP=${VIP:-172.31.40.200}
-  
-  read -rp "=> Enter ENI description (e.g. Readyset.io Keepalived ENI): " ENI_DESC
-  ENI_DESC=${ENI_DESC:-"Readyset.io Keepalived ENI"}
+read -rp $'\e[1m=> Enter VIP (e.g. 172.31.40.200): \e[0m' VIP
+VIP=${VIP:-172.31.40.200}
 
-  read -rp "=> Enter Subnet ID (e.g. subnet-1ea42441): " SUBNET_ID
-  SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
+read -rp $'\e[1m=> Enter ENI description (e.g. Readyset.io Keepalived ENI): \e[0m' ENI_DESC
+ENI_DESC=${ENI_DESC:-"Readyset.io Keepalived ENI"}
 
-  read -rp "=> Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): " SG_ID
-  SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
-  
-  read -rp "=> Enter Backup node private IP (e.g. 172.31.47.224): " PEER_IP
-  PEER_IP=${PEER_IP:-172.31.47.224}
+read -rp $'\e[1m=> Enter Subnet ID (e.g. subnet-1ea42441): \e[0m' SUBNET_ID
+SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
 
-  read -rp "=> Enter the Network Interface name (e.g. ens5): " IFACE
-  IFACE=${IFACE:-ens5}
+read -rp $'\e[1m=> Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): \e[0m' SG_ID
+SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
+
+read -rp $'\e[1m=> Enter Backup node private IP (e.g. 172.31.47.224): \e[0m' PEER_IP
+PEER_IP=${PEER_IP:-172.31.47.224}
+
+read -rp $'\e[1m=> Enter the Network Interface name (e.g. ens5): \e[0m' IFACE
+IFACE=${IFACE:-ens5}
 
   # Get instance-id with IMDSv2
-  TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  TOKEN=$(curl -S -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
   INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
 
   # Create ENI
@@ -143,7 +173,8 @@ main() {
   # Ensure ProxySQL is running
   if ! pgrep -x proxysql >/dev/null; then
     log INFO "ProxySQL not running, starting service and starting it on boot..."
-    sudo systemctl enable --now proxysql.service >/dev/null
+    sudo systemctl enable --now proxysql.service >/dev/null 2>&1
+    sleep 3
   else
     log INFO "ProxySQL already running"
   fi
@@ -253,6 +284,20 @@ EOF
   sudo systemctl enable keepalived >/dev/null 2>&1
   sudo systemctl restart keepalived >/dev/null 2>&1
 
+  # ---- report ENI attachment
+  THIS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  THIS_INSTANCE=$(curl -s -H "X-aws-ec2-metadata-token: $THIS_TOKEN" \
+    http://169.254.169.254/latest/meta-data/instance-id)
+
+  #log INFO "Checking ENI $ENI_ID attachment..."
+  #aws ec2 describe-network-interfaces \
+  #  --network-interface-ids "$ENI_ID" \
+  #  --query "NetworkInterfaces[0].{ENI:NetworkInterfaceId,Instance:Attachment.InstanceId,Status:Status,PrivateIp:PrivateIpAddress}" \
+  #  --output table || true
+
+  log INFO "This node instance-id: $THIS_INSTANCE"
+  log INFO "You can follow the logs with the journalctl -f -u keepalived command."
   log INFO "MASTER setup complete. ENI ID = $ENI_ID"
 }
 
