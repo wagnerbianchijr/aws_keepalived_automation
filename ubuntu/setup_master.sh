@@ -56,7 +56,7 @@ install_pkg() {
     log INFO "Package $pkg already installed"
   else
     log INFO "Installing $pkg..."
-    sudo apt-get -qq update -y && sudo apt-get -qq install -y "$pkg"
+    sudo apt-get -qq update -y && sudo apt-get -qq install -y "$pkg" >/dev/null 2>&1
     log INFO "Package $pkg installed successfully"
   fi
 }
@@ -74,7 +74,7 @@ install_proxysql() {
 
   local api_url="https://api.github.com/repos/sysown/proxysql/releases/latest"
   local latest_url
-  latest_url=$(curl -sL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
+  latest_url=$(curl -S -sL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
 
   if [[ -z "$latest_url" || "$latest_url" == "null" ]]; then
     log ERROR "Unable to determine latest ProxySQL release URL"
@@ -82,7 +82,7 @@ install_proxysql() {
   fi
 
   log INFO "Downloading $latest_url"
-  curl -SL -o /tmp/proxysql-latest.deb "$latest_url"
+  curl -SL -o /tmp/proxysql-latest.deb "$latest_url" >/dev/null 2>&1
   sudo apt-get -qq install -y libaio1t64 || true
   sudo dpkg -i /tmp/proxysql-latest.deb || true
   log INFO "ProxySQL installed successfully"
@@ -104,9 +104,9 @@ main() {
   # AWS CLI
   if ! command -v aws >/dev/null 2>&1; then
     log INFO "Installing AWS CLI v2..."
-    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-    unzip -q /tmp/awscliv2.zip -d /tmp
-    sudo /tmp/aws/install
+    curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip >/dev/null 2>&1
+    unzip -q /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
+    sudo /tmp/aws/install >/dev/null 2>&1
     log INFO "AWS CLI installed successfully"
   else
     log INFO "AWS CLI found: $(aws --version 2>&1)"
