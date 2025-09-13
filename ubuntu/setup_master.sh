@@ -29,7 +29,7 @@ enable_ip_forward() {
     current_value=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)
 
     if [ "$current_value" -eq 1 ]; then
-      log INFO "The net.ipv4.ip_forward kernel variable was successfully set to 1"
+      log INFO "Setting net.ipv4.ip_forward as 1."
       return 0
     else
       log ERROR "Failed to set net.ipv4.ip_forward (current value: $current_value)"
