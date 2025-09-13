@@ -69,6 +69,7 @@ main() {
   install_pkg curl
   install_pkg jq
   install_pkg unzip
+  install_pkg netcat-openbsd
 
   # AWS CLI
   if ! command -v aws >/dev/null 2>&1; then
@@ -225,12 +226,12 @@ vrrp_instance VI_1 {
     }
 
     virtual_ipaddress {
-        "${VIP}/32" dev ${IFACE}
+        ${VIP}/32 dev ${IFACE}
     }
 
     unicast_src_ip $(hostname -I | awk '{print $1}')/32
     unicast_peer {
-        "${PEER_IP}/32"
+        ${PEER_IP}/32
     }
 
     track_script {

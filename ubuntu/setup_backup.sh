@@ -27,8 +27,8 @@ install_pkg(){
     log INFO "Package $pkg already installed"
   else
     log INFO "Installing $pkg ..."
-    apt-get update -y >/dev/null
-    apt-get install -y "$pkg" >/dev/null
+    apt-get -qq update -y >/dev/null 2>&1
+    apt-get -qq install -y "$pkg" >/dev/null 2>&1
     log INFO "Package $pkg installed"
   fi
 }
@@ -64,8 +64,8 @@ install_proxysql(){
 
   curl -Ls "$url" -o /tmp/proxysql-latest.deb
   # libaio-dev provides the needed runtime on 24.04
-  apt-get install -y libaio-dev >/dev/null || true
-  dpkg -i /tmp/proxysql-latest.deb || apt-get -f install -y >/dev/null
+  apt-get -qq install -y libaio-dev >/dev/null || true
+  dpkg -i /tmp/proxysql-latest.deb || apt-get -qq -f install -y >/dev/null
   log INFO "ProxySQL installed successfully"
 
   if ! systemctl is-active --quiet proxysql; then
@@ -87,11 +87,16 @@ install_awscli
 install_proxysql
 
 # ---- gather input (with sensible defaults)
-read -rp "Enter ENI ID (from Master setup): " ENI_ID
-read -rp "Enter VIP (same as MASTER) [172.31.40.200]: " VIP
+read -rp "=> Enter ENI ID (from Master setup): " ENI_ID
+
+read -rp "=> Enter VIP (same as MASTER) (e.g. 172.31.40.200): " VIP 
 VIP=${VIP:-172.31.40.200}
-read -rp "Enter MASTER node private IP [172.31.32.209]: " PEER_IP
+
+read -rp "=> Enter MASTER node private IP (e.g. 172.31.32.209): " PEER_IP 
 PEER_IP=${PEER_IP:-172.31.32.209}
+
+read -rp "=> Enter the Network Interface name (e.g. ens5): " IFACE
+IFACE=${IFACE:-ens5}
 
 # ---- ensure keepalived dir exists
 install -d -m 0755 /etc/keepalived
@@ -99,6 +104,10 @@ install -d -m 0755 /etc/keepalived
 # ---- eni-move.sh
 cat >/etc/keepalived/eni-move.sh <<'EOF'
 #!/usr/bin/env bash
+#: Configuration created by Wagner Bianchi with Readyset.io
+#: http://readyset.io, Bianchi -> bianchi@readyset.io
+#: Don't edit this file directly, it will be overwritten by setup script.
+
 set -euo pipefail
 
 log(){ logger -t keepalived_script "Keepalived: $*"; }
@@ -164,13 +173,17 @@ chmod 0750 /etc/keepalived/eni-move.sh
 
 # ---- keepalived.conf
 cat >/etc/keepalived/keepalived.conf <<EOF
+#: Configuration created by Wagner Bianchi with Readyset.io
+#: http://readyset.io, Bianchi -> bianchi@readyset.io
+#: Don't edit this file directly, it will be overwritten by setup script.
 global_defs {
     script_user root
     enable_script_security
+    max_auto_priority 1
 }
 
 vrrp_script chk_proxysql {
-    script "/usr/bin/nc -z 127.0.0.1 6033"
+    script "$(which nc) -z 127.0.0.1 6033"
     interval 2
     timeout 2
     fall 3
@@ -179,9 +192,9 @@ vrrp_script chk_proxysql {
 
 vrrp_instance VI_1 {
     state BACKUP
-    interface ens5
+    interface ${IFACE}
     virtual_router_id 51
-    priority 100
+    priority 1
     nopreempt
     advert_int 1
 
@@ -190,13 +203,13 @@ vrrp_instance VI_1 {
         auth_pass S3cR3tP@
     }
 
-    unicast_src_ip $(hostname -I | awk '{print $1}')
+    unicast_src_ip $(hostname -I | awk '{print $1}')/32
     unicast_peer {
-        $PEER_IP
+        $PEER_IP/32
     }
 
     virtual_ipaddress {
-        $VIP
+        $VIP/32 dev ${IFACE}
     }
 
     track_script {
@@ -214,12 +227,12 @@ chmod 0644 /etc/keepalived/keepalived.conf
 # ---- services
 if ! systemctl is-active --quiet proxysql; then
   log INFO "Starting ProxySQL service"
-  systemctl enable --now proxysql >/dev/null
+  systemctl enable --now proxysql >/dev/null 2>&1
 fi
 
 log INFO "Starting keepalived service"
-systemctl enable --now keepalived >/dev/null
-systemctl restart keepalived
+sudo systemctl enable keepalived >/dev/null 2>&1
+sudo systemctl restart keepalived >/dev/null 2>&1
 
 # ---- report ENI attachment
 THIS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
