@@ -26,7 +26,7 @@ install_pkg() {
     log INFO "Package $pkg already installed"
   else
     log INFO "Installing $pkg..."
-    sudo apt-get update -y && sudo apt-get install -y "$pkg"
+    sudo apt-get -qq update -y && sudo apt-get -qq install -y "$pkg"
     log INFO "Package $pkg installed successfully"
   fi
 }
@@ -52,8 +52,8 @@ install_proxysql() {
   fi
 
   log INFO "Downloading $latest_url"
-  curl -L -o /tmp/proxysql-latest.deb "$latest_url"
-  sudo apt-get install -y libaio1t64 || true
+  curl -SL -o /tmp/proxysql-latest.deb "$latest_url"
+  sudo apt-get -qq install -y libaio1t64 || true
   sudo dpkg -i /tmp/proxysql-latest.deb || true
   log INFO "ProxySQL installed successfully"
 }
@@ -85,20 +85,23 @@ main() {
   install_proxysql
 
   # Gather user input with defaults
-  read -rp "Enter VIP (e.g. 172.31.40.200): " VIP
+  read -rp "=> Enter VIP (e.g. 172.31.40.200): " VIP
   VIP=${VIP:-172.31.40.200}
+  
+  read -rp "=> Enter ENI description (e.g. Readyset.io Keepalived ENI): " ENI_DESC
+  ENI_DESC=${ENI_DESC:-"Readyset.io Keepalived ENI"}
 
-  read -rp "Enter ENI description (e.g. Keepalived ENI): " ENI_DESC
-  ENI_DESC=${ENI_DESC:-"Keepalived ENI"}
-
-  read -rp "Enter Subnet ID (e.g. subnet-1ea42441): " SUBNET_ID
+  read -rp "=> Enter Subnet ID (e.g. subnet-1ea42441): " SUBNET_ID
   SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
 
-  read -rp "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): " SG_ID
+  read -rp "=> Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): " SG_ID
   SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
-
-  read -rp "Enter Backup node private IP (e.g. 172.31.47.224): " PEER_IP
+  
+  read -rp "=> Enter Backup node private IP (e.g. 172.31.47.224): " PEER_IP
   PEER_IP=${PEER_IP:-172.31.47.224}
+
+  read -rp "=> Enter the Network Interface name (e.g. ens5): " IFACE
+  IFACE=${IFACE:-ens5}
 
   # Get instance-id with IMDSv2
   TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
@@ -123,14 +126,14 @@ main() {
 
   # Wait for ENI
   log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
-  for i in {1..30}; do
+  for i in {1..90}; do
     if ip -br a | grep -q "$VIP"; then
       log INFO "VIP $VIP detected on this node"
       break
     fi
-    log INFO "Still waiting... $((i*3))s elapsed"
+    log INFO "Hold on, still waiting on AWS... $((i*3))s elapsed"
     sleep 3
-    if [[ $i -eq 30 ]]; then
+    if [[ $i -eq 90 ]]; then
       log ERROR "Timed out after 90 seconds: ENI $ENI_ID with VIP $VIP did not attach"
       exit 1
     fi
@@ -138,9 +141,8 @@ main() {
 
   # Ensure ProxySQL is running
   if ! pgrep -x proxysql >/dev/null; then
-    log INFO "ProxySQL not running, starting service..."
-    sudo systemctl enable proxysql
-    sudo systemctl start proxysql
+    log INFO "ProxySQL not running, starting service and starting it on boot..."
+    sudo systemctl enable --now proxysql.service >/dev/null
   else
     log INFO "ProxySQL already running"
   fi
@@ -148,6 +150,10 @@ main() {
   # ENI move script
   cat <<'EOF' | sudo tee /etc/keepalived/eni-move.sh >/dev/null
 #!/usr/bin/env bash
+#: Configuration created by Wagner Bianchi with Readyset.io
+#: http://readyset.io, Bianchi -> bianchi@readyset.io
+#: Don't edit this file directly, it will be overwritten by setup script.
+
 set -euo pipefail
 PATH=/usr/local/bin:/usr/bin:/bin
 
@@ -189,13 +195,17 @@ EOF
 
   # Keepalived config
   cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
+#: Configuration created by Wagner Bianchi with Readyset.io
+#: http://readyset.io, Bianchi -> bianchi@readyset.io
+#: Don't edit this file directly, it will be overwritten by setup script.
 global_defs {
    script_user root
    enable_script_security
+   max_auto_priority 2
 }
 
 vrrp_script chk_proxysql {
-    script "/usr/bin/nc -z 127.0.0.1 6033"
+    script "$(which nc) -z 127.0.0.1 6033"
     interval 3
     rise 3
     fall 3
@@ -203,9 +213,9 @@ vrrp_script chk_proxysql {
 
 vrrp_instance VI_1 {
     state MASTER
-    interface ens5
+    interface ${IFACE}
     virtual_router_id 51
-    priority 101
+    priority 2
     advert_int 1
     nopreempt
 
@@ -215,12 +225,12 @@ vrrp_instance VI_1 {
     }
 
     virtual_ipaddress {
-        $VIP
+        "${VIP}/32" dev ${IFACE}
     }
 
-    unicast_src_ip $(hostname -I | awk '{print $1}')
+    unicast_src_ip $(hostname -I | awk '{print $1}')/32
     unicast_peer {
-        $PEER_IP
+        "${PEER_IP}/32"
     }
 
     track_script {
@@ -239,8 +249,8 @@ EOF
 
   # Start Keepalived
   log INFO "Starting keepalived service"
-  sudo systemctl enable keepalived
-  sudo systemctl restart keepalived
+  sudo systemctl enable keepalived >/dev/null 2>&1
+  sudo systemctl restart keepalived >/dev/null 2>&1
 
   log INFO "MASTER setup complete. ENI ID = $ENI_ID"
 }
