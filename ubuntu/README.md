@@ -50,7 +50,7 @@ All scripts are in the [`ubuntu/`](./) folder:
 ## Prerequisites
 
 * Ubuntu 24.04 EC2 instances
-* IAM Role with permissions (https://docs.google.com/document/d/1InUzzzWgUv-bvTYahB9h0TZsdnMsm0pUJiZKkGrA9HI/edit?usp=sharing):
+* IAM Role with permissions:
 
   * `ec2:DescribeNetworkInterfaces`
   * `ec2:AttachNetworkInterface`
