@@ -5,6 +5,7 @@
 # Author      : Bianchi (bianchi@readyset.io)
 # Version     : v0.1
 # Date        : 2025-09-11
+# Language    : bash
 # Description : Bootstrap BACKUP node with Keepalived, ENI failover, and ProxySQL.
 # =============================================================================
 
