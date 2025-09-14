@@ -50,11 +50,80 @@ All scripts are in the [`ubuntu/`](./) folder:
 ## Prerequisites
 
 * Ubuntu 24.04 EC2 instances
-* IAM Role with permissions:
+* IAM Trust Policy
+```
+cat > trust-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "Service": "ec2.amazonaws.com" },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+```
+* IAM Role:
 
-  * `ec2:DescribeNetworkInterfaces`
-  * `ec2:AttachNetworkInterface`
-  * `ec2:DetachNetworkInterface`
+```
+cat > eni-policy.json <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "CreateOnlyWhenTagged",
+            "Effect": "Allow",
+            "Action": "ec2:CreateNetworkInterface",
+            "Resource": "*",
+            "Condition": {
+                "ForAllValues:StringEquals": {
+                    "aws:RequestTag/ha:managed": "true"
+                }
+            }
+        },
+        {
+            "Sid": "TagOnCreate",
+            "Effect": "Allow",
+            "Action": "ec2:CreateTags",
+            "Resource": "arn:aws:ec2:*:*:network-interface/*",
+            "Condition": {
+                "StringEquals": {
+                    "ec2:CreateAction": "CreateNetworkInterface"
+                },
+                "ForAllValues:StringEquals": {
+                    "aws:RequestTag/ha:managed": "true"
+                }
+            }
+        },
+        {
+            "Sid": "OperateTaggedENIs",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:CreateNetworkInterface",
+                "ec2:AttachNetworkInterface",
+                "ec2:DetachNetworkInterface",
+                "ec2:DescribeNetworkInterfaces",
+                "ec2:DeleteNetworkInterface",
+                "ec2:CreateTags"
+            ],
+            "Resource": [
+                "arn:aws:ec2:*:*:network-interface/*",
+                "arn:aws:ec2:*:*:instance/*"
+            ]
+        },
+        {
+            "Sid": "DescribeNIs",
+            "Effect": "Allow",
+            "Action": "ec2:DescribeNetworkInterfaces",
+            "Resource": "*"
+        }
+    ]
+}
+EOF
+```
+
 * Security Groups allowing:
 
   * TCP `6032`, `6033` (ProxySQL admin + client ports)
