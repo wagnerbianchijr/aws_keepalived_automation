@@ -33,6 +33,8 @@ Two EC2 instances are used:
   - [Failover Behavior](#failover-behavior)
     - [Topology Diagram](#topology-diagram)
     - [Failover Sequence](#failover-sequence)
+  - [Rollback Scripts ⚠️](#rollback-scripts-️)
+    - [Usage](#usage-1)
   - [Notes](#notes)
 
 ---
@@ -328,6 +330,41 @@ sequenceDiagram
     Client->>Backup: Resume SQL traffic via VIP:6033
     Note over Backup: ProxySQL now serves traffic
 ```
+---
+
+## Rollback Scripts ⚠️
+
+This repository also includes **rollback scripts**:
+
+- [`rollback_master.sh`](./ubuntu/rollback_master.sh)
+- [`rollback_backup.sh`](./ubuntu/rollback_backup.sh)
+
+These scripts are meant to **undo everything created by the setup scripts**.
+They will stop services, remove configuration files, uninstall packages (ProxySQL, Keepalived, AWS CLI), and optionally delete the ENI.
+
+⚠️ **Warning:**
+Be **extremely careful** when running these rollback scripts. They will remove all the work done by the setup scripts, including the ENI and its configuration.
+Use them only if you want to completely reset the environment.
+
+### Usage
+
+For Master rollback:
+
+```bash
+cd ubuntu
+chmod +x rollback_master.sh
+./rollback_master.sh <eni-id>
+````
+
+For Backup rollback:
+
+```bash
+cd ubuntu
+chmod +x rollback_backup.sh
+./rollback_backup.sh <eni-id>
+```
+
+If `<eni-id>` is not provided, the script will skip ENI deletion and only clean up the local environment.
 
 ---
 
@@ -336,5 +373,6 @@ sequenceDiagram
 * `auth_pass` is hardcoded as `S3cR3tP@` (8 chars).
 * Use `journalctl -u keepalived` and `tcpdump -i ens5 proto 112` for debugging.
 * These scripts are **drafts / untested** and should be validated before production.
+* 
 
 ---
