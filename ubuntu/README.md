@@ -124,11 +124,88 @@ cat > eni-policy.json <<EOF
 EOF
 ```
 
+* Create the **policy** and the **role**:
+```
+aws iam create-role \
+  --role-name KeepalivedENIRole \
+  --output table \
+  --assume-role-policy-document file:///tmp/trust-policy.json \
+  --profile <your-aws-profile>
+
+aws iam put-role-policy \
+  --role-name KeepalivedENIRole \
+  --policy-name KeepalivedENIPolicy \
+  --output table \
+  --policy-document file://eni-policy.json \
+  --profile <your-aws-profile>
+```
+* Create an **Instance Profile**:
+```
+aws iam create-instance-profile \
+  --instance-profile-name KeepalivedENIRole \
+  --output table \
+  --profile <your-aws-profile>
+
+aws iam add-role-to-instance-profile \
+  --instance-profile-name KeepalivedENIRole \
+  --role-name KeepalivedENIRole \
+  --output table \
+  --profile <your-aws-profile>
+```
 * Security Groups allowing:
 
   * TCP `6032`, `6033` (ProxySQL admin + client ports)
   * Protocol `112` (VRRP) between the two nodes
+```
+SG_ID=$(aws ec2 describe-instances \
+  --instance-ids $INSTANCE_ID_1 \
+  --query "Reservations[].Instances[].SecurityGroups[0].GroupId" \
+  --profile <your-aws-profile> \
+  --output text)
 
+#: authorizing VRRP communication traffic
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol 112 --port -1 \
+  --source-group ${SG_ID} \
+  --profile <your-aws-profile> \
+  --output table
+
+
+#: collecting VPC ID, Subnet ID and the VPC CIDR
+SUBNET_ID=$(aws ec2 describe-instances \
+  --instance-ids $INSTANCE_ID_1 \
+  --query "Reservations[].Instances[].SubnetId" \
+  --output text \
+  --profile <your-aws-profile>)
+
+VPC_ID=$(aws ec2 describe-subnets \
+  --subnet-ids $SUBNET_ID \
+  --query "Subnets[0].VpcId" \
+  --output text \
+  --profile <your-aws-profile>)
+
+VPC_CIDR=$(aws ec2 describe-vpcs \
+  --vpc-ids $VPC_ID \
+  --query "Vpcs[0].CidrBlock" \
+  --output text \
+  --profile <your-aws-profile>)
+
+#: authorizing the ProxySQL
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol tcp --port 6032 \
+  --cidr ${VPC_CIDR} \
+  --profile <your-aws-profile> \
+  --output table
+
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol tcp --port 6033 \
+  --cidr ${VPC_CIDR} \
+  --profile <your-aws-profile> \
+  --output table
+```
 ---
 
 ## Usage
@@ -150,6 +227,7 @@ You will be asked for:
 * Subnet ID
 * Security Group ID
 * Backup node IP
+* Primary Network Interface Name
 
 At the end, the script will output the **ENI ID**.
 👉 Copy this ENI ID — you’ll need it for the Backup script.
@@ -171,6 +249,7 @@ You will be asked for:
 * ENI ID (from Master output)
 * VIP (same as Master)
 * Master node IP
+* Primary Network Interface Name
 
 This script will:
 
