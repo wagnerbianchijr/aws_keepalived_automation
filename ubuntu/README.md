@@ -373,6 +373,5 @@ If `<eni-id>` is not provided, the script will skip ENI deletion and only clean 
 * `auth_pass` is hardcoded as `S3cR3tP@` (8 chars).
 * Use `journalctl -u keepalived` and `tcpdump -i ens5 proto 112` for debugging.
 * These scripts are **drafts / untested** and should be validated before production.
-* 
 
 ---
