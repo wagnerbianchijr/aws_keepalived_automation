@@ -291,12 +291,6 @@ EOF
   THIS_INSTANCE=$(curl -s -H "X-aws-ec2-metadata-token: $THIS_TOKEN" \
     http://169.254.169.254/latest/meta-data/instance-id)
 
-  #log INFO "Checking ENI $ENI_ID attachment..."
-  #aws ec2 describe-network-interfaces \
-  #  --network-interface-ids "$ENI_ID" \
-  #  --query "NetworkInterfaces[0].{ENI:NetworkInterfaceId,Instance:Attachment.InstanceId,Status:Status,PrivateIp:PrivateIpAddress}" \
-  #  --output table || true
-
   log INFO "This node instance-id: $THIS_INSTANCE"
   log INFO "You can follow the logs with the journalctl -f -u keepalived command."
   log INFO "MASTER setup complete. ENI ID = $ENI_ID"
