@@ -1,0 +1,94 @@
+Before your setup_master.sh can run, the EC2 instances need an IAM role that allows them to 
+call the AWS APIs for Elastic IPs and ENIs. Let me give you the clean sequence in Plain AWS 
+CLI steps, with explanations. You’ll end up with:
+
+You need AWS CLI for the below:
+$ aws --version
+aws-cli/2.25.14 Python/3.12.10 Darwin/24.6.0 source/arm64
+
+--
+
+mkdir ./aws_staging
+cd ./aws_staging
+
+--
+
+cat > trust-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+cat > keepalived-eip-policy.json <<'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAddresses",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:DescribeInstances",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:CreateNetworkInterface",
+        "ec2:AttachNetworkInterface",
+        "ec2:DetachNetworkInterface",
+        "ec2:DeleteNetworkInterface"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+EOF
+
+#: Create the IAM role
+aws iam create-role \
+  --role-name KeepalivedEipRole \
+  --assume-role-policy-document file://trust-policy.json
+
+#: Attach the permissions policy
+aws iam put-role-policy \
+  --role-name KeepalivedEipRole \
+  --policy-name KeepalivedEipPolicy \
+  --policy-document file://keepalived-eip-policy.json
+
+#: Create the instance profile
+aws iam create-instance-profile \
+  --instance-profile-name KeepalivedEipInstanceProfile
+
+#: Add the role into it
+aws iam add-role-to-instance-profile \
+  --instance-profile-name KeepalivedEipInstanceProfile \
+  --role-name KeepalivedEipRole
+
+#: Attach the instance profile to your EC2s
+aws ec2 associate-iam-instance-profile \
+  --region us-east-1 \
+  --instance-id i-instanceonexxx \
+  --iam-instance-profile Name=KeepalivedEipInstanceProfile
+
+aws ec2 associate-iam-instance-profile \
+  --region us-east-1 \
+  --instance-id i-instancetwoxxx \
+  --iam-instance-profile Name=KeepalivedEipInstanceProfile
+
+Recap:
+
+trust-policy.json → lets EC2 assume the role.
+
+- KeepalivedEipRole → the role itself.
+- keepalived-eip-policy.json → allows EIP + ENI actions.
+- KeepalivedEipInstanceProfile → wrapper to bind the role to EC2s.
+- associate-iam-instance-profile → actually attaches it to your servers.
+
+Once this is done, your setup_master.sh can safely call aws ec2 associate-address, disassociate-address, and create-network-interface without needing credentials inside the instance.
