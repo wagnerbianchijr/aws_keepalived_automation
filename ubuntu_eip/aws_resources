@@ -82,6 +82,57 @@ aws ec2 associate-iam-instance-profile \
   --instance-id i-instancetwoxxx \
   --iam-instance-profile Name=KeepalivedEipInstanceProfile
 
+#: Adjust Security Groups
+
+SG_ID=$(aws ec2 describe-instances \
+  --instance-ids $INSTANCE_ID_1 \
+  --query "Reservations[].Instances[].SecurityGroups[0].GroupId" \
+  --profile <your-aws-profile> \
+  --output text)
+
+#: authorizing VRRP communication traffic
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol 112 --port -1 \
+  --source-group ${SG_ID} \
+  --profile <your-aws-profile> \
+  --output table
+
+
+#: collecting VPC ID, Subnet ID and the VPC CIDR
+SUBNET_ID=$(aws ec2 describe-instances \
+  --instance-ids $INSTANCE_ID_1 \
+  --query "Reservations[].Instances[].SubnetId" \
+  --output text \
+  --profile <your-aws-profile>)
+
+VPC_ID=$(aws ec2 describe-subnets \
+  --subnet-ids $SUBNET_ID \
+  --query "Subnets[0].VpcId" \
+  --output text \
+  --profile <your-aws-profile>)
+
+VPC_CIDR=$(aws ec2 describe-vpcs \
+  --vpc-ids $VPC_ID \
+  --query "Vpcs[0].CidrBlock" \
+  --output text \
+  --profile <your-aws-profile>)
+
+#: authorizing the ProxySQL
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol tcp --port 6032 \
+  --cidr ${VPC_CIDR} \
+  --profile <your-aws-profile> \
+  --output table
+
+aws ec2 authorize-security-group-ingress \
+  --group-id ${SG_ID} \
+  --protocol tcp --port 6033 \
+  --cidr ${VPC_CIDR} \
+  --profile <your-aws-profile> \
+  --output table
+
 Recap:
 
 trust-policy.json → lets EC2 assume the role.
