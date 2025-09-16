@@ -35,13 +35,14 @@ install_pkg() {
 
 install_proxysql() {
   if ! command -v proxysql >/dev/null 2>&1; then
-    log INFO "Installing ProxySQL..."
+    log INFO "Installing and configuring ProxySQL..."
     local api_url="https://api.github.com/repos/sysown/proxysql/releases/latest"
     local latest_url
-    latest_url=$(curl -SsL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
-    curl -SL -o /tmp/proxysql.deb "$latest_url" 2>/dev/null
-    sudo apt-get -qq install -y libaio1t64 || true
-    sudo dpkg -i /tmp/proxysql.deb || true
+    latest_url=$(curl -sL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
+    curl -sSL -o /tmp/proxysql.deb "$latest_url" >/dev/null 2>&1
+    sudo apt-get -qq install -y libaio1t64 >/dev/null 2>&1 || true
+    sudo dpkg -i /tmp/proxysql.deb >/dev/null 2>&1 || true
+    log INFO "ProxySQL installed successfully"
   fi
 }
 
@@ -88,12 +89,12 @@ main() {
   install_proxysql
 
 # Collect inputs
-ask_input "=> Enter AWS Region (e.g. us-east-1)" REGION "us-east-1"
-ask_input "=> Enter Subnet ID for Project ENI" SUBNET_ID
-ask_input "=> Enter Security Group ID for Project ENI" SG_ID
-ask_input "=> Enter Backup node Private IP" PEER_IP
+ask_input "=> Enter AWS Region (e.g. us-east-1)" REGION
+ask_input "=> Enter Subnet ID for Project ENI (e.g. subnet-1ea42441)" SUBNET_ID
+ask_input "=> Enter Security Group ID for Project ENI (e.g. sg-0aba3ccd66cf6ea50)" SG_ID
+ask_input "=> Enter Backup node Private IP (e.g. 172.31.45.2)" PEER_IP
 ask_input "=> Enter the Primary Network Interface name (e.g. ens3)" IFACE
-ask_input "=> Enter the Allocation ID of existing EIP" ALLOCATION_ID
+ask_input "=> Enter the Allocation ID of existing EIP (e.g. eipalloc-0c9600a9215acbfb0)" ALLOCATION_ID
 
 # Show all inputs
 cat <<EOF
@@ -132,7 +133,7 @@ log INFO "Inputs confirmed. Proceeding..."
     PROJECT_ENI=$(aws ec2 create-network-interface \
       --region "$REGION" --subnet-id "$SUBNET_ID" \
       --groups "$SG_ID" --description "Project HA ENI" \
-      --query 'NetworkInterface.NetworkInterfaceId' --output text ) >/dev/null 2>&1
+      --query 'NetworkInterface.NetworkInterfaceId' --output text 2>/dev/null)
     aws ec2 attach-network-interface \
       --region "$REGION" --network-interface-id "$PROJECT_ENI" \
       --instance-id "$INSTANCE_ID" --device-index 1 >/dev/null 2>&1
@@ -140,7 +141,7 @@ log INFO "Inputs confirmed. Proceeding..."
   else
     log INFO "Reusing existing ENI for project: $PROJECT_ENI"
   fi
-  echo "$PROJECT_ENI" | sudo tee /etc/keepalived/project-eni-id
+  echo "$PROJECT_ENI" | sudo tee /etc/keepalived/project-eni-id >/dev/null
 
   # Allocate EIP if needed
   if [[ -z "$ALLOCATION_ID" ]]; then
@@ -160,7 +161,7 @@ log INFO "Inputs confirmed. Proceeding..."
   fi
   aws ec2 associate-address --region "$REGION" \
     --allocation-id "$ALLOCATION_ID" \
-    --network-interface-id "$PROJECT_ENI" 2>/dev/null
+    --network-interface-id "$PROJECT_ENI" >/dev/null 2>&1
 
   # Ensure ProxySQL is up
   if ! pgrep -x proxysql >/dev/null; then
