@@ -1,4 +1,14 @@
 #!/bin/bash
+
+# =============================================================================
+# Script Name : preflightchk.sh
+# Author      : Bianchi (bianchi@readyset.io)
+# Version     : v1.1-eip-eni
+# Date        : 2025-09-15
+# Language    : bash
+# Description : Check if instances have the right attached role.
+# =============================================================================
+
 set -euo pipefail
 
 log() {
