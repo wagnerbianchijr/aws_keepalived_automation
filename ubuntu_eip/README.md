@@ -59,6 +59,24 @@ flowchart LR
 
 ## ⚙️ Scripts
 
+### 🔍 Preflight Checks (`preflightchk.sh`)
+
+Before running `setup_master.sh` or `setup_backup.sh`, execute the **`preflightchk.sh`** script to make sure the environment is ready.
+This helper validates basic requirements and prevents half-way failures. It checks:
+
+* **IP Forwarding** → Confirms `net.ipv4.ip_forward` is enabled.
+* **AWS CLI v2** → Ensures the AWS CLI is installed and working with valid credentials.
+* **Permissions** → Verifies the IAM role or profile attached to the instance allows `ec2:Describe*`, `ec2:AssociateAddress`, and `ec2:AttachNetworkInterface`.
+* **Packages** → Confirms that `curl`, `jq`, `unzip`, and `netcat` are installed.
+* **Connectivity** → Runs a quick reachability test between master and backup nodes.
+
+Run it like this:
+
+```bash
+chmod +x preflightchk.sh
+./preflightchk.sh
+```
+
 ### `setup_master.sh`
 
 * Installs Keepalived, ProxySQL, AWS CLI.
