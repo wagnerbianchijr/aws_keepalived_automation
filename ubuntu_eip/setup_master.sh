@@ -140,7 +140,7 @@ if ! CREATE_TAGS_OUTPUT=$(aws ec2 create-tags \
   exit 1
 fi
 
-log INFO "✅ Tag:Name set to '$EIP_TAG_NAME' for Elastic IP $ALLOCATION_ID"
+log INFO "The Tag:Name was set to '$EIP_TAG_NAME' for Elastic IP $ALLOCATION_ID"
 
   TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
     -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
