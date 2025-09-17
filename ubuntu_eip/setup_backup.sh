@@ -78,6 +78,7 @@ main() {
   install_pkg jq
   install_pkg unzip
   install_pkg netcat-openbsd
+  install_pkg mariadb-client-core
 
   if ! command -v aws >/dev/null 2>&1; then
     log INFO "Installing AWS CLI v2..."
