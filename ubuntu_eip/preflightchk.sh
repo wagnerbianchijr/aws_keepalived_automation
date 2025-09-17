@@ -9,12 +9,30 @@ log() {
 REGION="us-east-1"   # adjust as needed
 
 # ===============================
-# STEP 1 - Ensure AWS CLI installed
+# STEP 1 - Ensure unzip installed
+# ===============================
+if ! command -v unzip >/dev/null 2>&1; then
+  log WARN "unzip not found. Installing unzip..."
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -y && sudo apt-get install -y unzip
+  elif command -v yum >/dev/null 2>&1; then
+    sudo yum install -y unzip
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y unzip
+  else
+    log ERROR "Could not detect package manager to install unzip."
+    exit 1
+  fi
+else
+  log INFO "unzip is installed: $(unzip -v | head -n1)"
+fi
+
+# ===============================
+# STEP 2 - Ensure AWS CLI installed
 # ===============================
 if ! command -v aws >/dev/null 2>&1; then
   log WARN "aws CLI not found. Installing AWS CLI v2..."
 
-  # Amazon Linux / Ubuntu compatible installer
   TMP_DIR=$(mktemp -d)
   cd "$TMP_DIR"
   curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
@@ -34,7 +52,7 @@ else
 fi
 
 # ===============================
-# STEP 2 - Get Instance Metadata
+# STEP 3 - Get Instance Metadata
 # ===============================
 TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
   -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
@@ -54,7 +72,7 @@ log INFO "Instance ID: $INSTANCE_ID"
 log INFO "Attached IAM Role (from metadata): $ROLE_NAME"
 
 # ===============================
-# STEP 3 - Resolve role policies
+# STEP 4 - Resolve role policies
 # ===============================
 ROLE_ARN=$(aws ec2 describe-instances \
   --instance-ids "$INSTANCE_ID" \
