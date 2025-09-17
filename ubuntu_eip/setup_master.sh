@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+#: Constants
+EIP_TAG_NAME="Readyset.io HA Elastic IP"
+
 log() {
   echo "$(date '+%b %d %H:%M:%S') [$1] $2"
 }
@@ -116,7 +119,36 @@ if [[ "$CONFIRM" != "y" ]]; then
   exit 1
 fi
 
-log INFO "Inputs confirmed. Proceeding..."
+  log INFO "Inputs confirmed, checking the Elastic IP $ALLOCATION_ID..."
+
+  EXISTS=$(aws ec2 describe-addresses \
+    --allocation-ids "$ALLOCATION_ID" \
+    --region "$REGION" \
+    --query 'Addresses[0].AllocationId' \
+    --output text 2>/dev/null || true)
+
+  if [[ "$EXISTS" == "None" || -z "$EXISTS" ]]; then
+    log ERROR "The Elastic IP with AllocationId $ALLOCATION_ID not found in $REGION"
+    exit 1
+  fi
+
+  log INFO "Updating tag:Name for Elastic IP $ALLOCATION_ID with value '$EIP_TAG_NAME'..."
+
+  if ! aws ec2 create-tags \
+    --resources "$ALLOCATION_ID" \
+    --tags Key=Name,Value="$EIP_TAG_NAME" \
+    --region "$REGION"; then
+    log ERROR "Failed to update tag. Check IAM permissions and variable values."
+    exit 1
+  fi
+
+  log INFO "The tag:Name was updated for Elastic IP $ALLOCATION_ID."
+
+  aws ec2 create-tags \
+    --resources "$ALLOCATION_ID" \
+    --tags Key=Name,Value="$EIP_TAG_NAME" \
+    --region "$REGION" >/dev/null 2>&1 || true
+  log INFO "The tag:Name was updated for the EIP Allocation ID as $ALLOCATION_ID updated."
 
   TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
     -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
