@@ -14,7 +14,7 @@ This repository contains automation scripts to bootstrap a **highly available da
 - **Elastic IP (EIP)** for external reachability.
 - **ProxySQL** as the SQL-aware database proxy.
 
-## 💬 Before running the setup scripts, review the aws_resources file to ensure the required resources are created in advance.
+### 💬 Before running the setup scripts, review the aws_resources file to ensure the required resources are created in advance.
 
 We implemented two bootstrap scripts:
 - `setup_master.sh`: Configures the primary node (MASTER).
