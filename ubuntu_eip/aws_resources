@@ -147,4 +147,6 @@ trust-policy.json → lets EC2 assume the role.
 - KeepalivedEipInstanceProfile → wrapper to bind the role to EC2s.
 - associate-iam-instance-profile → actually attaches it to your servers.
 
-Once this is done, your setup_master.sh can safely call aws ec2 associate-address, disassociate-address, and create-network-interface without needing credentials inside the instance.
+Once this is done, your setup_master.sh can safely call aws ec2 associate-address, 
+disassociate-address, and create-network-interface without needing credentials inside 
+the instance.
