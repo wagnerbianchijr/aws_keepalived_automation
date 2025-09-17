@@ -9,14 +9,29 @@ log() {
 REGION="us-east-1"   # adjust as needed
 
 # ===============================
-# STEP 1 - Check AWS CLI
+# STEP 1 - Ensure AWS CLI installed
 # ===============================
 if ! command -v aws >/dev/null 2>&1; then
-  log ERROR "aws CLI is not installed or not in PATH."
-  exit 1
-fi
+  log WARN "aws CLI not found. Installing AWS CLI v2..."
 
-log INFO "aws CLI is installed: $(aws --version)"
+  # Amazon Linux / Ubuntu compatible installer
+  TMP_DIR=$(mktemp -d)
+  cd "$TMP_DIR"
+  curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip -q awscliv2.zip
+  sudo ./aws/install
+
+  cd -
+  rm -rf "$TMP_DIR"
+
+  if ! command -v aws >/dev/null 2>&1; then
+    log ERROR "Failed to install aws CLI. Please install manually."
+    exit 1
+  fi
+  log INFO "aws CLI installed successfully."
+else
+  log INFO "aws CLI is installed: $(aws --version)"
+fi
 
 # ===============================
 # STEP 2 - Get Instance Metadata
@@ -36,18 +51,11 @@ if [[ -z "$ROLE_NAME" ]]; then
 fi
 
 log INFO "Instance ID: $INSTANCE_ID"
-log INFO "Attached IAM Role: $ROLE_NAME"
+log INFO "Attached IAM Role (from metadata): $ROLE_NAME"
 
 # ===============================
-# STEP 3 - Show Role Contents
+# STEP 3 - Resolve role policies
 # ===============================
-PROFILE=$(aws configure list-profiles | head -n1 || true)
-
-if [[ -z "$PROFILE" ]]; then
-  # fallback to default if no profile is configured
-  PROFILE="default"
-fi
-
 ROLE_ARN=$(aws ec2 describe-instances \
   --instance-ids "$INSTANCE_ID" \
   --region "$REGION" \
@@ -61,7 +69,6 @@ fi
 
 INSTANCE_PROFILE_NAME=$(basename "$ROLE_ARN")
 
-# Get the actual role name from instance profile
 IAM_ROLE_NAME=$(aws iam get-instance-profile \
   --instance-profile-name "$INSTANCE_PROFILE_NAME" \
   --query "InstanceProfile.Roles[0].RoleName" \
@@ -70,7 +77,7 @@ IAM_ROLE_NAME=$(aws iam get-instance-profile \
 log INFO "Resolved IAM Role Name: $IAM_ROLE_NAME"
 log INFO "Fetching role policy contents..."
 
-# Show inline policies
+# Inline policies
 INLINE_POLICIES=$(aws iam list-role-policies \
   --role-name "$IAM_ROLE_NAME" \
   --query "PolicyNames[]" \
@@ -89,7 +96,7 @@ else
   log INFO "No inline policies found for role $IAM_ROLE_NAME"
 fi
 
-# Show attached managed policies
+# Attached managed policies
 ATTACHED_POLICIES=$(aws iam list-attached-role-policies \
   --role-name "$IAM_ROLE_NAME" \
   --query "AttachedPolicies[].PolicyArn" \
