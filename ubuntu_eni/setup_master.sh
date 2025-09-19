@@ -156,8 +156,9 @@ main() {
   NEXT_INDEX=$(aws ec2 describe-instances \
     --instance-ids "$INSTANCE_ID" \
     --region "$REGION" \
-    --query "max(Reservations[0].Instances[0].NetworkInterfaces[].Attachment.DeviceIndex) + 1" \
+    --query "max(Reservations[0].Instances[0].NetworkInterfaces[].Attachment.DeviceIndex)" \
     --output text)
+  NEXT_INDEX=$((NEXT_INDEX + 1))
 
   aws ec2 attach-network-interface \
     --network-interface-id "$ENI_ID" \
