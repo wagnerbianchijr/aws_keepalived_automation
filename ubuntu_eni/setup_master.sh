@@ -152,19 +152,12 @@ main() {
 
   log INFO "Created ENI with ID $ENI_ID"
 
-  # Attach ENI
-  NEXT_INDEX=$(aws ec2 describe-instances \
-    --instance-ids "$INSTANCE_ID" \
-    --region "$REGION" \
-    --query "max(Reservations[0].Instances[0].NetworkInterfaces[].Attachment.DeviceIndex)" \
-    --output text)
-  NEXT_INDEX=$((NEXT_INDEX + 1))
-
+  # Attach ENI - he we can have an issue if the ENI secondary is already attached
   aws ec2 attach-network-interface \
+    --region "$REGION" \
     --network-interface-id "$ENI_ID" \
     --instance-id "$INSTANCE_ID" \
-    --device-index "$NEXT_INDEX" \
-    --region "$REGION" >/dev/null
+    --device-index 1 >/dev/null
   
   aws create-tags \
     --resources "$ENI_ID" \
