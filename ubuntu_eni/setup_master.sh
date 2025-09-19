@@ -163,7 +163,10 @@ main() {
     --region "$REGION" \
     --network-interface-id "$ENI_ID" \
     --instance-id "$INSTANCE_ID" \
-    --device-index 1
+    --device-index 1 >/dev/null 2>&1 || {
+      log ERROR "Failed to attach ENI $ENI_ID to instance $INSTANCE_ID. Please check AWS Console."
+      exit 1
+    }
 
   # Wait for ENI
   log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
