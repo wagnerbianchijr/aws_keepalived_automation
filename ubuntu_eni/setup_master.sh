@@ -114,27 +114,69 @@ main() {
     exit 1
   }
 
-  # Gather user input with defaults
-  read -rp $'\e[1m=> Enter AWS Region (e.g. us-east-1): \e[0m' REGION
+  # Function to ask for required input
+  ask_input() {
+    local prompt="$1"
+    local varname="$2"
+    local default="${3:-}"
+
+    while true; do
+      if [[ -n "$default" ]]; then
+        read -rp $'\e[1m'"$prompt [$default]: "$'\e[0m' input
+        input="${input:-$default}"
+      else
+        read -rp $'\e[1m'"$prompt: "$'\e[0m' input
+      fi
+
+      if [[ -n "$input" ]]; then
+        eval "$varname=\"\$input\""
+        break
+      else
+        echo "The $varname cannot be empty. Please try again."
+      fi
+    done
+  }
+
+  # Defaults
   REGION=${REGION:-us-east-1}
-
-  read -rp $'\e[1m=> Enter VIP (e.g. 172.31.40.200): \e[0m' VIP
   VIP=${VIP:-172.31.40.200}
-
-  read -rp $'\e[1m=> Enter ENI description (e.g. Readyset.io Keepalived ENI): \e[0m' ENI_DESC
   ENI_DESC=${ENI_DESC:-"Readyset.io Keepalived ENI"}
-
-  read -rp $'\e[1m=> Enter Subnet ID (e.g. subnet-1ea42441): \e[0m' SUBNET_ID
   SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
-
-  read -rp $'\e[1m=> Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50): \e[0m' SG_ID
   SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
-
-  read -rp $'\e[1m=> Enter Backup node private IP (e.g. 172.31.47.224): \e[0m' PEER_IP
   PEER_IP=${PEER_IP:-172.31.45.2}
-
-  read -rp $'\e[1m=> Enter the Network Interface name (e.g. ens5): \e[0m' IFACE
   IFACE=${IFACE:-ens5}
+
+  # Gather user input with defaults
+  ask_input "Enter AWS Region (e.g. us-east-1):" REGION
+  ask_input "Enter VIP (e.g. 172.31.40.200):" VIP
+  ask_input "Enter ENI description (e.g. Readyset.io Keepalived ENI):" ENI_DESC
+  ask_input "Enter Subnet ID (e.g. subnet-1ea42441):" SUBNET_ID
+  ask_input "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50):" SG_ID
+  ask_input "Enter Backup node private IP (e.g. 172.31.45.2):" PEER_IP
+  ask_input "Enter the Primary NIC Interface name (e.g. ens5):" IFACE
+
+# Show all inputs
+cat <<EOF
+
+Please confirm the following inputs:
+  AWS Region              : $REGION
+  VIP                     : $VIP
+  ENI description         : $ENI_DESC
+  Subnet ID               : $SUBNET_ID
+  Security Group ID       : $SG_ID
+  Backup node Private IP  : $PEER_IP
+  Primary NIC Interface   : $IFACE
+
+EOF
+
+read -rp "Continue with these values? (y/N): " CONFIRM
+CONFIRM=${CONFIRM,,}  # lowercase
+if [[ "$CONFIRM" != "y" ]]; then
+  echo "Aborted by user."
+  exit 1
+fi
+
+log INFO "Inputs confirmed, let's rock it..."
 
   # Get instance-id with IMDSv2
   TOKEN=$(curl -S -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
