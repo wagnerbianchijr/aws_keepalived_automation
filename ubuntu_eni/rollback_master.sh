@@ -69,8 +69,8 @@ fi
 read -rp "Do you want to purge ProxySQL, Keepalived, and AWS CLI packages? [y/N]: " yn
 if [[ $yn =~ ^[Yy]$ ]]; then
   log INFO "Purging ProxySQL and Keepalived (apt packages)..."
-  sudo apt purge -y -qq proxysql keepalived || true
-  sudo apt autoremove -y || true
+  sudo apt purge -y -qq proxysql keepalived >/dev/null 2>&1 || true
+  sudo apt autoremove -y -qq >/dev/null 2>&1 || true
 
   # Handle AWS CLI (apt and manual install)
   if command -v aws &>/dev/null; then
