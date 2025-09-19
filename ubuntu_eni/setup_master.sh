@@ -78,8 +78,8 @@ install_proxysql() {
 
   log INFO "Downloading $latest_url"
   curl -SL -o /tmp/proxysql-latest.deb "$latest_url" >/dev/null 2>&1
-  sudo apt-get -qq install -y libaio1t64 || true
-  sudo dpkg -i /tmp/proxysql-latest.deb || true
+  sudo apt-get -qq install -y libaio1t64 >/dev/null 2>&1
+  sudo dpkg -i /tmp/proxysql-latest.deb >/dev/null 2>&1 
   log INFO "ProxySQL installed successfully"
 }
 
