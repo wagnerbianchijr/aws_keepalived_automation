@@ -157,12 +157,12 @@ main() {
     --region "$REGION" \
     --network-interface-id "$ENI_ID" \
     --instance-id "$INSTANCE_ID" \
-    --device-index 1 >/dev/null
+    --device-index 1
   
   aws create-tags \
     --resources "$ENI_ID" \
     --tags Key=Name,Value="Readyset.io HA Dedicated ENI" \
-    --region "$REGION" >/dev/null
+    --region "$REGION"
 
   # Wait for ENI
   log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
