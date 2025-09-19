@@ -149,8 +149,14 @@ main() {
     --description "$ENI_DESC" \
     --query 'NetworkInterface.NetworkInterfaceId' \
     --output text)
+  
+    #: Tagging the ENI
+  aws ec2 create-tags \
+    --resources "$ENI_ID" \
+    --tags Key=Name,Value="Readyset.io HA Dedicated ENI" \
+    --region "$REGION" >/dev/null 2>&1
 
-  log INFO "Created ENI with ID $ENI_ID"
+  log INFO "Created and tagged the new ENI with ID $ENI_ID"
 
   # Attach ENI - he we can have an issue if the ENI secondary is already attached
   aws ec2 attach-network-interface \
@@ -158,11 +164,6 @@ main() {
     --network-interface-id "$ENI_ID" \
     --instance-id "$INSTANCE_ID" \
     --device-index 1
-  
-  aws create-tags \
-    --resources "$ENI_ID" \
-    --tags Key=Name,Value="Readyset.io HA Dedicated ENI" \
-    --region "$REGION"
 
   # Wait for ENI
   log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
