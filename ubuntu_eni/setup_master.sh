@@ -76,7 +76,7 @@ install_proxysql() {
     exit 1
   fi
 
-  log INFO "Downloading $latest_url"
+  #log INFO "Downloading $latest_url"
   curl -SL -o /tmp/proxysql-latest.deb "$latest_url" >/dev/null 2>&1
   sudo apt-get -qq install -y libaio1t64 >/dev/null 2>&1
   sudo dpkg -i /tmp/proxysql-latest.deb >/dev/null 2>&1 
@@ -147,13 +147,13 @@ main() {
   IFACE=${IFACE:-ens5}
 
   # Gather user input with defaults
-  ask_input "Enter AWS Region (e.g. us-east-1):" REGION
-  ask_input "Enter VIP (e.g. 172.31.40.200):" VIP
-  ask_input "Enter ENI description (e.g. Readyset.io Keepalived ENI):" ENI_DESC
-  ask_input "Enter Subnet ID (e.g. subnet-1ea42441):" SUBNET_ID
-  ask_input "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50):" SG_ID
-  ask_input "Enter Backup node private IP (e.g. 172.31.45.2):" PEER_IP
-  ask_input "Enter the Primary NIC Interface name (e.g. ens5):" IFACE
+  ask_input "Enter AWS Region (e.g. us-east-1)" REGION
+  ask_input "Enter VIP (e.g. 172.31.40.200)" VIP
+  ask_input "Enter ENI description (e.g. Readyset.io Keepalived ENI)" ENI_DESC
+  ask_input "Enter Subnet ID (e.g. subnet-1ea42441)" SUBNET_ID
+  ask_input "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50)" SG_ID
+  ask_input "Enter Backup node private IP (e.g. 172.31.45.2)" PEER_IP
+  ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
 
 # Show all inputs
 cat <<EOF
