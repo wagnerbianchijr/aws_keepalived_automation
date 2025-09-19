@@ -24,21 +24,21 @@ log() {
 # 1. Stop and disable Keepalived
 if systemctl is-active --quiet keepalived; then
   log INFO "Stopping Keepalived..."
-  sudo systemctl stop keepalived
+  sudo systemctl stop keepalived 2>/dev/null || true
 fi
 if systemctl is-enabled --quiet keepalived; then
   log INFO "Disabling Keepalived..."
-  sudo systemctl disable keepalived
+  sudo systemctl disable keepalived 2>/dev/null || true
 fi
 
 # 2. Remove Keepalived config and scripts
 if [[ -f /etc/keepalived/keepalived.conf ]]; then
   log INFO "Removing /etc/keepalived/keepalived.conf"
-  sudo rm -f /etc/keepalived/keepalived.conf
+  sudo rm -f /etc/keepalived/keepalived.conf || true
 fi
 if [[ -f /etc/keepalived/eni-move.sh ]]; then
   log INFO "Removing /etc/keepalived/eni-move.sh"
-  sudo rm -f /etc/keepalived/eni-move.sh
+  sudo rm -f /etc/keepalived/eni-move.sh || true
 fi
 
 # 3. Delete ENI (requires ENI_ID)
@@ -69,7 +69,7 @@ fi
 read -rp "Do you want to purge ProxySQL, Keepalived, and AWS CLI packages? [y/N]: " yn
 if [[ $yn =~ ^[Yy]$ ]]; then
   log INFO "Purging ProxySQL and Keepalived (apt packages)..."
-  sudo apt purge -y proxysql keepalived || true
+  sudo apt purge -y -qq proxysql keepalived || true
   sudo apt autoremove -y || true
 
   # Handle AWS CLI (apt and manual install)
@@ -80,7 +80,7 @@ if [[ $yn =~ ^[Yy]$ ]]; then
       sudo apt purge -y awscli || true
     elif [[ "$AWS_PATH" == "/usr/local/bin/aws" ]]; then
       log INFO "Removing AWS CLI v2 installed via zip..."
-      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws /tmp/aws /tmp/awscli*
+      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws /tmp/aws /tmp/awscli* 2>/dev/null || true
     else
       log INFO "AWS CLI found at $AWS_PATH (not managed by apt), leaving it in place"
     fi
