@@ -131,7 +131,7 @@ main() {
   SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
 
   read -rp $'\e[1m=> Enter Backup node private IP (e.g. 172.31.47.224): \e[0m' PEER_IP
-  PEER_IP=${PEER_IP:-172.31.47.224}
+  PEER_IP=${PEER_IP:-172.31.45.2}
 
   read -rp $'\e[1m=> Enter the Network Interface name (e.g. ens5): \e[0m' IFACE
   IFACE=${IFACE:-ens5}
