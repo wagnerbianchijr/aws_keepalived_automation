@@ -100,9 +100,9 @@ main() {
   # AWS CLI
   if ! command -v aws >/dev/null 2>&1; then
     log INFO "Installing AWS CLI v2..."
-    curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip >/dev/null 2>&1
-    unzip -q /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
-    sudo /tmp/aws/install >/dev/null 2>&1
+    curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip #>/dev/null 2>&1
+    unzip -q /tmp/awscliv2.zip -d /tmp #>/dev/null 2>&1
+    sudo /tmp/aws/install >/dev/null #2>&1
     log INFO "AWS CLI installed successfully"
   else
     log INFO "AWS CLI found: $(aws --version 2>&1)"
