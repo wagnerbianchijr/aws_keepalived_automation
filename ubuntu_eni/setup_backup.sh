@@ -4,30 +4,20 @@
 # Script Name : setup_backup.sh
 # Author      : Bianchi (bianchi@readyset.io)
 # Version     : v0.1
-# Date        : 2025-09-11
+# Date        : 2025-09-22
 # Language    : bash
-# Description : Bootstrap BACKUP node with Keepalived, ENI failover, and ProxySQL.
+# Description : Bootstrap BACKUP node with Keepalived, ENI, and ProxySQL.
 # =============================================================================
 
 set -euo pipefail
 
-export DEBIAN_FRONTEND=noninteractive
-
-log(){ 
-  echo "$(date '+%b %d %H:%M:%S') [$1] $2";
+log() {
+  echo "$(date '+%b %d %H:%M:%S') [$1] $2"
 }
 
-# =============================================================================
-# In order for the Keepalived service to forward network packets properly 
-# to the real servers, each router node must have IP forwarding turned on
-# in the kernel.
-# =============================================================================
 enable_ip_forward() {
-  
   if sudo sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1; then
-    
     current_value=$(sysctl -n net.ipv4.ip_forward 2>/dev/null)
-
     if [ "$current_value" -eq 1 ]; then
       log INFO "Setting net.ipv4.ip_forward as 1."
       return 0
@@ -40,187 +30,178 @@ enable_ip_forward() {
     return 1
   fi
 }
-
-# Enable the ip_forward kernel variable
 enable_ip_forward || {
   log ERROR "Please enable IP forwarding manually and re-run the script."
   exit 1
 }
 
-# ---- root check
-if [[ $EUID -ne 0 ]]; then
-  log ERROR "This script must be run as root"
-  exit 1
-fi
-
-# ---- install helpers
-install_pkg(){
+install_pkg() {
   local pkg="$1"
   if dpkg -s "$pkg" >/dev/null 2>&1; then
     log INFO "Package $pkg already installed"
   else
-    log INFO "Installing $pkg ..."
-    apt-get -qq update -y >/dev/null 2>&1
-    apt-get -qq install -y "$pkg" >/dev/null 2>&1
-    log INFO "Package $pkg installed"
+    log INFO "Installing $pkg..."
+    sudo apt-get -qq update -y && sudo apt-get -qq install -y "$pkg" >/dev/null 2>&1
+    log INFO "Package $pkg installed successfully"
   fi
 }
 
-install_awscli(){
-  if command -v aws >/dev/null 2>&1; then
-    log INFO "AWS CLI already installed: $(aws --version 2>&1)"
-    return
-  fi
-  log INFO "Installing AWS CLI v2 ..."
-  curl -s "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
-  unzip -qq /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
-  sudo /tmp/aws/install >/dev/null 2>&1
-  log INFO "AWS CLI installed successfully"
-}
-
-install_proxysql(){
+install_proxysql() {
   if command -v proxysql >/dev/null 2>&1; then
     log INFO "ProxySQL already installed: $(proxysql --version)"
     return
   fi
 
-  log INFO "ProxySQL not found, installing latest release from GitHub..."
-  # robust match for any amd64 .deb
-  local url
-  url=$(curl -S -s https://api.github.com/repos/sysown/proxysql/releases/latest \
-      | jq -r '.assets[] | select(.name | test("proxysql_.*_amd64\\.deb$")).browser_download_url' | head -n1) >/dev/null 2>&1
+  log INFO "ProxySQL not found, installing latest release..."
+  local api_url="https://api.github.com/repos/sysown/proxysql/releases/latest"
+  local latest_url
+  latest_url=$(curl -S -sL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
 
-  if [[ -z "$url" || "$url" == "null" ]]; then
+  if [[ -z "$latest_url" || "$latest_url" == "null" ]]; then
     log ERROR "Unable to determine latest ProxySQL release URL"
     exit 1
   fi
 
-  curl -S -Ls "$url" -o /tmp/proxysql-latest.deb >/dev/null 2>&1
-  apt-get -qq install -y libaio-dev >/dev/null || true
-  dpkg -i /tmp/proxysql-latest.deb || apt-get -qq -f install -y >/dev/null 2>&1
+  curl -SL -o /tmp/proxysql-latest.deb "$latest_url" >/dev/null 2>&1
+  sudo apt-get -qq install -y libaio1t64 >/dev/null 2>&1
+  sudo dpkg -i /tmp/proxysql-latest.deb >/dev/null 2>&1 
   log INFO "ProxySQL installed successfully"
-
-  if ! systemctl is-active --quiet proxysql; then
-    log INFO "Starting ProxySQL service"
-    systemctl enable --now proxysql >/dev/null
-  else
-    log INFO "ProxySQL already running"
-  fi
 }
 
-# ---- install required packages
-install_pkg keepalived
-install_pkg curl
-install_pkg jq
-install_pkg unzip
-install_pkg netcat-openbsd   # provides /usr/bin/nc
+# Function to ask for required input
+ask_input() {
+  local prompt="$1"
+  local varname="$2"
+  local default="${3:-}"
+  while true; do
+    if [[ -n "$default" ]]; then
+      read -rp $'\e[1m'"$prompt [$default]: "$'\e[0m' input
+      input="${input:-$default}"
+    else
+      read -rp $'\e[1m'"$prompt: "$'\e[0m' input
+    fi
+    if [[ -n "$input" ]]; then
+      eval "$varname=\"\$input\""
+      break
+    else
+      echo "The $varname cannot be empty. Please try again."
+    fi
+  done
+}
 
-# ---- install AWS CLI and ProxySQL
-install_awscli
-install_proxysql
+main() {
+  log INFO "Starting setup on BACKUP node"
 
-# ---- gather input (with sensible defaults)
-read -rp $'\e[1m=> Enter ENI ID (from Master setup): \e[0m' ENI_ID
+  install_pkg keepalived
+  install_pkg curl
+  install_pkg jq
+  install_pkg unzip
+  install_pkg netcat-openbsd
+  install_pkg mariadb-client-core
 
-read -rp $'\e[1m=> Enter VIP (same as MASTER) (e.g. 172.31.40.200): \e[0m' VIP 
-VIP=${VIP:-172.31.40.200}
+  if ! command -v aws >/dev/null 2>&1; then
+    log INFO "Installing AWS CLI v2..."
+    curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip >/dev/null 2>&1
+    unzip -q /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
+    sudo /tmp/aws/install >/dev/null 2>&1
+    log INFO "AWS CLI installed successfully"
+  else
+    log INFO "AWS CLI found: $(aws --version 2>&1)"
+  fi
 
-read -rp $'\e[1m=> Enter MASTER node private IP (e.g. 172.31.32.209): \e[0m' PEER_IP 
-PEER_IP=${PEER_IP:-172.31.32.209}
+  install_proxysql || {
+    log ERROR "ProxySQL installation failed, exiting."
+    exit 1
+  }
 
-read -rp $'\e[1m=> Enter the Network Interface name (e.g. ens5): \e[0m' IFACE
-IFACE=${IFACE:-ens5}
+  # Gather required inputs (same defaults, but ENI_ID is mandatory)
+  REGION=${REGION:-us-east-1}
+  VIP=${VIP:-172.31.40.200}
+  ENI_ID=${ENI_ID:-eni-0bfe3d997f6cd7477}   # must be passed from master setup
+  PEER_IP=${PEER_IP:-172.31.38.131}         # master private IP
+  IFACE=${IFACE:-ens5}
 
-# ---- ensure keepalived dir exists
-[ -d /etc/keepalived ] || install -d -m 0755 /etc/keepalived
+  ask_input "Enter AWS Region (e.g. $REGION)" input; REGION="${input:-$REGION}"
+  ask_input "Enter VIP (e.g. $VIP)" input; VIP="${input:-$VIP}"
+  ask_input "Enter ENI ID (from Master setup, e.g. $ENI_ID)" input; ENI_ID="${input:-$ENI_ID}"
+  ask_input "Enter Master node private IP (e.g. $PEER_IP)" input; PEER_IP="${input:-$PEER_IP}"
+  ask_input "Enter the Primary NIC Interface name (e.g. $IFACE)" input; IFACE="${input:-$IFACE}"
 
-# ---- eni-move.sh
-cat >/etc/keepalived/eni-move.sh <<'EOF'
-#!/usr/bin/env bash
-#: Configuration created by Wagner Bianchi with Readyset.io
-#: http://readyset.io, Bianchi -> bianchi@readyset.io
-#: Don't edit this file directly, it will be overwritten by setup script.
+cat <<EOF
 
-set -euo pipefail
+Please confirm the following inputs:
+  AWS Region        : $REGION
+  VIP               : $VIP
+  ENI ID            : $ENI_ID
+  Master Private IP : $PEER_IP
+  NIC Interface     : $IFACE
 
-log(){ logger -t keepalived_script "Keepalived: $*"; }
+EOF
 
-ENI_ID="__ENI_ID__"
-AWS_BIN=$(command -v aws || true)
-if [[ -z "${AWS_BIN:-}" ]]; then
-  log "ERROR: aws CLI not found in PATH"
+read -rp "Continue with these values? (y/N): " CONFIRM
+CONFIRM=${CONFIRM,,}
+if [[ "$CONFIRM" != "y" ]]; then
+  echo "Aborted by user."
   exit 1
 fi
 
-# IMDSv2
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/instance-id)
+# ENI move script
+cat <<'EOF' | sudo tee /etc/keepalived/eni-move.sh >/dev/null
+#!/usr/bin/env bash
+set -euo pipefail
+PATH=/usr/local/bin:/usr/bin:/bin
 
-ACTION=${1:-}
+ENI_ID="__ENI_ID__"
+REGION="__REGION__"
+
+log() { logger "Keepalived: $*"; }
+
+TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+
+ACTION="$1"
 
 if [[ "$ACTION" == "attach" ]]; then
-  ATTACHED_TO=$($AWS_BIN ec2 describe-network-interfaces \
-    --network-interface-ids "$ENI_ID" \
-    --query 'NetworkInterfaces[0].Attachment.InstanceId' \
-    --output text 2>/dev/null || echo "None")
-
+  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
   if [[ "$ATTACHED_TO" != "$INSTANCE_ID" ]]; then
-    ATTACHMENT_ID=$($AWS_BIN ec2 describe-network-interfaces \
-      --network-interface-ids "$ENI_ID" \
-      --query 'NetworkInterfaces[0].Attachment.AttachmentId' \
-      --output text 2>/dev/null || echo "None")
-
+    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
     if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
-      log "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
-      $AWS_BIN ec2 detach-network-interface --attachment-id "$ATTACHMENT_ID" --force
+      log "Detaching ENI $ENI_ID from $ATTACHED_TO"
+      aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
       sleep 5
     fi
-
     log "Attaching ENI $ENI_ID to $INSTANCE_ID"
-    $AWS_BIN ec2 attach-network-interface \
-      --network-interface-id "$ENI_ID" \
-      --instance-id "$INSTANCE_ID" \
-      --device-index 1
+    aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI_ID" --instance-id "$INSTANCE_ID" --device-index 1
   else
     log "ENI $ENI_ID already attached to this instance"
   fi
 elif [[ "$ACTION" == "detach" ]]; then
-  ATTACHMENT_ID=$($AWS_BIN ec2 describe-network-interfaces \
-    --network-interface-ids "$ENI_ID" \
-    --query 'NetworkInterfaces[0].Attachment.AttachmentId' \
-    --output text 2>/dev/null || echo "None")
-
+  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
   if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
     log "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
-    $AWS_BIN ec2 detach-network-interface --attachment-id "$ATTACHMENT_ID" --force
+    aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
   else
-    log "ENI $ENI_ID already detached"
+    log "ENI $ENI_ID not attached, nothing to do"
   fi
 fi
 EOF
-sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
-chown root:root /etc/keepalived/eni-move.sh
-chmod 0750 /etc/keepalived/eni-move.sh
+sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
+sudo chmod +x /etc/keepalived/eni-move.sh
 
-# ---- keepalived.conf
-cat >/etc/keepalived/keepalived.conf <<EOF
-#: Configuration created by Wagner Bianchi with Readyset.io
-#: http://readyset.io, Bianchi -> bianchi@readyset.io
-#: Don't edit this file directly, it will be overwritten by setup script.
+# Keepalived config for BACKUP
+cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
 global_defs {
-    script_user root
-    enable_script_security
-    max_auto_priority 1
+   script_user root
+   enable_script_security
+   max_auto_priority 2
 }
 
 vrrp_script chk_proxysql {
     script "$(which nc) -z 127.0.0.1 6033"
-    interval 2
-    timeout 2
+    interval 3
+    rise 3
     fall 3
-    rise 2
 }
 
 vrrp_instance VI_1 {
@@ -228,57 +209,42 @@ vrrp_instance VI_1 {
     interface ${IFACE}
     virtual_router_id 51
     priority 1
-    nopreempt
     advert_int 1
+    nopreempt
 
     authentication {
         auth_type PASS
         auth_pass S3cR3tP@
     }
 
-    unicast_src_ip $(hostname -I | awk '{print $1}')/32
-    unicast_peer {
-        $PEER_IP/32
+    virtual_ipaddress {
+        ${VIP}/32 dev ${IFACE}
     }
 
-    virtual_ipaddress {
-        $VIP/32 dev ${IFACE}
+    unicast_src_ip $(hostname -I | awk '{print $1}')/32
+    unicast_peer {
+        ${PEER_IP}/32
     }
 
     track_script {
         chk_proxysql
     }
 
+    garp_master_delay 5
+    garp_master_repeat 2
+    garp_master_refresh 10
+
     notify_master "/etc/keepalived/eni-move.sh attach"
     notify_backup "/etc/keepalived/eni-move.sh detach"
     notify_fault  "/etc/keepalived/eni-move.sh detach"
 }
 EOF
-chown root:root /etc/keepalived/keepalived.conf
-chmod 0644 /etc/keepalived/keepalived.conf
-
-# ---- services
-if ! systemctl is-active --quiet proxysql; then
-  log INFO "Starting ProxySQL service"
-  systemctl enable --now proxysql >/dev/null 2>&1
-fi
 
 log INFO "Starting keepalived service"
 sudo systemctl enable keepalived >/dev/null 2>&1
 sudo systemctl restart keepalived >/dev/null 2>&1
 
-# ---- report ENI attachment
-THIS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-THIS_INSTANCE=$(curl -s -H "X-aws-ec2-metadata-token: $THIS_TOKEN" \
-  http://169.254.169.254/latest/meta-data/instance-id)
+log INFO "BACKUP setup complete. Watching ENI $ENI_ID (Region: $REGION)"
+}
 
-#log INFO "Checking ENI $ENI_ID attachment..."
-#aws ec2 describe-network-interfaces \
-#  --network-interface-ids "$ENI_ID" \
-#  --query "NetworkInterfaces[0].{ENI:NetworkInterfaceId,Instance:Attachment.InstanceId,Status:Status,PrivateIp:PrivateIpAddress}" \
-#  --output table || true
-
-log INFO "This node instance-id: $THIS_INSTANCE"
-log INFO "You can follow the logs with the journalctl -f -u keepalived command."
-log INFO $'\e[1mBACKUP setup complete.\e[0m'
+main
