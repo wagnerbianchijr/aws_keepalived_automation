@@ -103,7 +103,7 @@ main() {
     curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
     unzip -q /tmp/awscliv2.zip -d /tmp
     sudo /tmp/aws/install >/dev/null
-    rm -rf /tmp/awscliv2.zip /tmp/aws
+    rm -rf /tmp/aws*
     log INFO "AWS CLI installed successfully"
     aws --version
   else

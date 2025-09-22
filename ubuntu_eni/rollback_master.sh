@@ -80,7 +80,7 @@ if [[ $yn =~ ^[Yy]$ ]]; then
       sudo apt purge -y awscli || true
     elif [[ "$AWS_PATH" == "/usr/local/bin/aws" ]]; then
       log INFO "Removing AWS CLI v2 installed via zip..."
-      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws /tmp/aws /tmp/awscli* 2>/dev/null || true
+      sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws* /tmp/aws* 2>/dev/null || true
       log INFO "Removing proxysql datadir files..."
       sudo rm -rf /var/lib/proxysql 2>/dev/null || true
     else
