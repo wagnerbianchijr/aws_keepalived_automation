@@ -81,6 +81,8 @@ if [[ $yn =~ ^[Yy]$ ]]; then
     elif [[ "$AWS_PATH" == "/usr/local/bin/aws" ]]; then
       log INFO "Removing AWS CLI v2 installed via zip..."
       sudo rm -rf /usr/local/aws-cli /usr/local/bin/aws /tmp/aws /tmp/awscli* 2>/dev/null || true
+      log INFO "Removing proxysql datadir files..."
+      sudo rm -rf /var/lib/proxysql 2>/dev/null || true
     else
       log INFO "AWS CLI found at $AWS_PATH (not managed by apt), leaving it in place"
     fi

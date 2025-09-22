@@ -103,6 +103,8 @@ if [[ $yn =~ ^[Yy]$ ]]; then
   apt purge -y proxysql keepalived || true
   apt autoremove -y || true
   uninstall_awscli
+  log INFO "Removing proxysql datadir files..."
+  sudo rm -rf /var/lib/proxysql 2>/dev/null || true
 else
   log INFO "Leaving ProxySQL, Keepalived, and AWS CLI installed"
 fi

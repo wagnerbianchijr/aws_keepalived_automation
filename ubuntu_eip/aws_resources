@@ -59,83 +59,85 @@ EOF
 #: Create the IAM role
 aws iam create-role \
   --role-name KeepalivedEipRole \
-  --assume-role-policy-document file://trust-policy.json
+  --assume-role-policy-document file://trust-policy.json \
+  --profile readyset-sandbox-default
 
 #: Attach the permissions policy
 aws iam put-role-policy \
   --role-name KeepalivedEipRole \
   --policy-name KeepalivedEipPolicy \
-  --policy-document file://keepalived-eip-policy.json
-
-#: Create the instance profile
-aws iam create-instance-profile \
-  --instance-profile-name KeepalivedEipInstanceProfile
+  --policy-document file://keepalived-eip-policy.json \
+  --profile readyset-sandbox-default
 
 #: Add the role into it
 aws iam add-role-to-instance-profile \
   --instance-profile-name KeepalivedEipInstanceProfile \
-  --role-name KeepalivedEipRole
+  --role-name KeepalivedEipRole \
+  --profile readyset-sandbox-default
 
 #: Attach the instance profile to your EC2s
-aws ec2 associate-iam-instance-profile \
-  --region us-east-1 \
-  --instance-id i-instanceonexxx \
-  --iam-instance-profile Name=KeepalivedEipInstanceProfile
 
-aws ec2 associate-iam-instance-profile \
-  --region us-east-1 \
-  --instance-id i-instancetwoxxx \
-  --iam-instance-profile Name=KeepalivedEipInstanceProfile
+for x in {i-04861460dd4589e08,i-0693a772ba4c8750c};
+do
+  aws ec2 associate-iam-instance-profile \
+    --region us-east-1 \
+    --instance-id ${x} \
+    --iam-instance-profile Name=KeepalivedEipInstanceProfile \
+    --profile readyset-sandbox-default \
+    --output text;
+done
+
+#: Export INSTANCE_IDs
+export INSTANCE_ID_1=i-04861460dd4589e08
+export INSTANCE_ID_2=i-0693a772ba4c8750c
 
 #: Adjust Security Groups
-
 SG_ID=$(aws ec2 describe-instances \
   --instance-ids $INSTANCE_ID_1 \
   --query "Reservations[].Instances[].SecurityGroups[0].GroupId" \
-  --profile <your-aws-profile> \
-  --output text)
+  --profile readyset-sandbox-default \
+  --output text); echo "SG_ID: $SG_ID"
 
 #: authorizing VRRP communication traffic
 aws ec2 authorize-security-group-ingress \
   --group-id ${SG_ID} \
   --protocol 112 --port -1 \
   --source-group ${SG_ID} \
-  --profile <your-aws-profile> \
+  --profile readyset-sandbox-default \
   --output table
-
 
 #: collecting VPC ID, Subnet ID and the VPC CIDR
 SUBNET_ID=$(aws ec2 describe-instances \
   --instance-ids $INSTANCE_ID_1 \
   --query "Reservations[].Instances[].SubnetId" \
   --output text \
-  --profile <your-aws-profile>)
+  --profile readyset-sandbox-default)
 
 VPC_ID=$(aws ec2 describe-subnets \
   --subnet-ids $SUBNET_ID \
   --query "Subnets[0].VpcId" \
   --output text \
-  --profile <your-aws-profile>)
+  --profile readyset-sandbox-default)
 
 VPC_CIDR=$(aws ec2 describe-vpcs \
   --vpc-ids $VPC_ID \
   --query "Vpcs[0].CidrBlock" \
   --output text \
-  --profile <your-aws-profile>)
+  --profile readyset-sandbox-default)
 
 #: authorizing the ProxySQL
 aws ec2 authorize-security-group-ingress \
   --group-id ${SG_ID} \
   --protocol tcp --port 6032 \
   --cidr ${VPC_CIDR} \
-  --profile <your-aws-profile> \
+  --profile readyset-sandbox-default \
   --output table
 
 aws ec2 authorize-security-group-ingress \
   --group-id ${SG_ID} \
   --protocol tcp --port 6033 \
   --cidr ${VPC_CIDR} \
-  --profile <your-aws-profile> \
+  --profile readyset-sandbox-default \
   --output table
 
 Recap:
