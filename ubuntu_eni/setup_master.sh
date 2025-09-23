@@ -148,6 +148,7 @@ main() {
   ALLOC_ID=${ALLOC_ID:-eipalloc-0f7ce09357b2dec5e}
   PEER_IP=${PEER_IP:-172.31.37.44}
   IFACE=${IFACE:-ens5}
+  SUBNET_MASK=${SUBNET_MASK:-20}
 
   # Gather user input with defaults
   ask_input "Enter AWS Region (e.g. us-east-1)" REGION
@@ -157,6 +158,7 @@ main() {
   ask_input "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50)" SG_ID
   ask_input "Enter Backup node private IP (e.g. 172.31.37.44)" PEER_IP
   ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
+  ask_input "Enter the Primary NIC Subnet Mask (e.g. 20)" SUBNET_MASK
 
 # Show all inputs
 cat <<EOF
@@ -169,6 +171,7 @@ Please confirm the following inputs:
   Security Group ID       : $SG_ID
   Backup node Private IP  : $PEER_IP
   Primary NIC Interface   : $IFACE
+  Subnet Mask / CIDR      : $SUBNET_MASK
 
 EOF
 
@@ -291,10 +294,10 @@ if [[ "$ACTION" == "attach" ]]; then
   ip link set "$IFACE" up || true
 
   if ! ip -br a show dev "$IFACE" | grep -q "$VIP"; then
-    ip addr add "$VIP/24" dev "$IFACE"
-    log "Assigned VIP $VIP/24 to $IFACE"
+    ip addr add "$VIP/$SUBNET_MASK" dev "$IFACE"
+    log "Assigned VIP $VIP/$SUBNET_MASK to $IFACE"
   else
-    log "VIP $VIP already present on $IFACE"
+    log "VIP $VIP/$SUBNET_MASK already present on $IFACE"
   fi
 
   # --- Ensure EIP is associated with ENI+VIP ---
