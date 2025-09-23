@@ -217,10 +217,10 @@ log INFO "Inputs confirmed, let's rock it..."
     }
 
   # Wait for ENI
-  log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP..."
+  log INFO "Waiting for ENI $ENI_ID to attach with VIP $VIP/$SUBNET_MASK..."
   for i in {1..90}; do
     if ip -br a | grep -q "$VIP"; then
-      log INFO "VIP $VIP detected on this node"
+      log INFO "VIP $VIP/$SUBNET_MASK detected on this node"
       break
     fi
     log INFO "Hold on, still waiting on AWS... $((i*3))s elapsed"
