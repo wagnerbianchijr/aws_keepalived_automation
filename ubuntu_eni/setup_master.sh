@@ -321,6 +321,7 @@ EOF
 sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__VIP__|$VIP|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__ALLOC_ID__|$ALLOC_ID|g" /etc/keepalived/eni-move.sh
 sudo chmod +x /etc/keepalived/eni-move.sh
 
   # Keepalived config
