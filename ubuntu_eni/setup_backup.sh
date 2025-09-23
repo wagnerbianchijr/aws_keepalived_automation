@@ -4,9 +4,9 @@
 # Script Name : setup_backup.sh
 # Author      : Bianchi (bianchi@readyset.io)
 # Version     : v0.1
-# Date        : 2025-09-22
+# Date        : 2025-09-11
 # Language    : bash
-# Description : Bootstrap BACKUP node with Keepalived, ENI, and ProxySQL.
+# Description : Bootstrap BACKUP node with Keepalived, ENI hooks, and ProxySQL.
 # =============================================================================
 
 set -euo pipefail
@@ -52,7 +52,7 @@ install_proxysql() {
     return
   fi
 
-  log INFO "ProxySQL not found, installing latest release..."
+  log INFO "ProxySQL not found, installing latest release from GitHub..."
   local api_url="https://api.github.com/repos/sysown/proxysql/releases/latest"
   local latest_url
   latest_url=$(curl -S -sL "$api_url" | jq -r '.assets[] | select(.name | endswith("amd64.deb")).browser_download_url' | head -n1)
@@ -68,30 +68,10 @@ install_proxysql() {
   log INFO "ProxySQL installed successfully"
 }
 
-# Function to ask for required input
-ask_input() {
-  local prompt="$1"
-  local varname="$2"
-  local default="${3:-}"
-  while true; do
-    if [[ -n "$default" ]]; then
-      read -rp $'\e[1m'"$prompt [$default]: "$'\e[0m' input
-      input="${input:-$default}"
-    else
-      read -rp $'\e[1m'"$prompt: "$'\e[0m' input
-    fi
-    if [[ -n "$input" ]]; then
-      eval "$varname=\"\$input\""
-      break
-    else
-      echo "The $varname cannot be empty. Please try again."
-    fi
-  done
-}
-
 main() {
   log INFO "Starting setup on BACKUP node"
 
+  # Packages
   install_pkg keepalived
   install_pkg curl
   install_pkg jq
@@ -99,42 +79,83 @@ main() {
   install_pkg netcat-openbsd
   install_pkg mariadb-client-core
 
+  # AWS CLI
   if ! command -v aws >/dev/null 2>&1; then
     log INFO "Installing AWS CLI v2..."
-    curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip >/dev/null 2>&1
-    unzip -q /tmp/awscliv2.zip -d /tmp >/dev/null 2>&1
-    sudo /tmp/aws/install >/dev/null 2>&1
+    curl -Ss "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+    unzip -q /tmp/awscliv2.zip -d /tmp
+    sudo /tmp/aws/install >/dev/null
+    rm -rf /tmp/aws*
     log INFO "AWS CLI installed successfully"
+    aws --version
   else
     log INFO "AWS CLI found: $(aws --version 2>&1)"
   fi
 
+  # ProxySQL
   install_proxysql || {
     log ERROR "ProxySQL installation failed, exiting."
     exit 1
   }
 
-  # Gather required inputs (same defaults, but ENI_ID is mandatory)
+  # Ensure ProxySQL is running
+  if ! pgrep -x proxysql >/dev/null; then
+    log INFO "ProxySQL not running, starting service and enabling on boot..."
+    sudo systemctl enable --now proxysql.service >/dev/null 2>&1
+    sleep 3
+  else
+    log INFO "ProxySQL already running"
+  fi
+
+  # Function to ask for required input
+  ask_input() {
+    local prompt="$1"
+    local varname="$2"
+    local default="${3:-}"
+
+    while true; do
+      if [[ -n "$default" ]]; then
+        read -rp $'\e[1m'"$prompt [$default]: "$'\e[0m' input
+        input="${input:-$default}"
+      else
+        read -rp $'\e[1m'"$prompt: "$'\e[0m' input
+      fi
+
+      if [[ -n "$input" ]]; then
+        eval "$varname=\"\$input\""
+        break
+      else
+        echo "The $varname cannot be empty. Please try again."
+      fi
+    done
+  }
+
+  # Defaults
   REGION=${REGION:-us-east-1}
   VIP=${VIP:-172.31.40.200}
-  ENI_ID=${ENI_ID:-eni-0bfe3d997f6cd7477}   # must be passed from master setup
-  PEER_IP=${PEER_IP:-172.31.38.131}         # master private IP
+  ALLOC_ID=${ALLOC_ID:-eipalloc-0f7ce09357b2dec5e}
+  ENI_ID=${ENI_ID:-eni-xxxxxxxx}    # Must be provided by user
+  PEER_IP=${PEER_IP:-172.31.47.224}
   IFACE=${IFACE:-ens5}
 
-  ask_input "Enter AWS Region (e.g. $REGION)" input; REGION="${input:-$REGION}"
-  ask_input "Enter VIP (e.g. $VIP)" input; VIP="${input:-$VIP}"
-  ask_input "Enter ENI ID (from Master setup, e.g. $ENI_ID)" input; ENI_ID="${input:-$ENI_ID}"
-  ask_input "Enter Master node private IP (e.g. $PEER_IP)" input; PEER_IP="${input:-$PEER_IP}"
-  ask_input "Enter the Primary NIC Interface name (e.g. $IFACE)" input; IFACE="${input:-$IFACE}"
+  # Gather user input with defaults
+  ask_input "Enter AWS Region (e.g. us-east-1)" REGION
+  ask_input "Enter VIP (e.g. 172.31.40.200)" VIP
+  ask_input "Enter the EIP Allocation ID (e.g. eipalloc-xxxxxx)" ALLOC_ID
+  ask_input "Enter the ENI ID created by the MASTER (e.g. eni-xxxxxx)" ENI_ID
+  ask_input "Enter Backup node private IP (e.g. 172.31.47.224)" PEER_IP
+  ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
 
+# Show all inputs
 cat <<EOF
 
 Please confirm the following inputs:
-  AWS Region        : $REGION
-  VIP               : $VIP
-  ENI ID            : $ENI_ID
-  Master Private IP : $PEER_IP
-  NIC Interface     : $IFACE
+  AWS Region              : $REGION
+  VIP                     : $VIP
+  EIP Allocation ID       : $ALLOC_ID
+  ENI ID (from MASTER)    : $ENI_ID
+  Backup node Private IP  : $PEER_IP
+  Primary NIC Interface   : $IFACE
 
 EOF
 
@@ -145,52 +166,95 @@ if [[ "$CONFIRM" != "y" ]]; then
   exit 1
 fi
 
-# ENI move script
-cat <<'EOF' | sudo tee /etc/keepalived/eni-move.sh >/dev/null
+log INFO "Inputs confirmed, starting setup..."
+
+  # ENI move script
+  cat <<'EOF' | sudo tee /etc/keepalived/eni-move.sh >/dev/null
 #!/usr/bin/env bash
 set -euo pipefail
 PATH=/usr/local/bin:/usr/bin:/bin
 
 ENI_ID="__ENI_ID__"
 REGION="__REGION__"
+VIP="__VIP__"
+ALLOC_ID="__ALLOC_ID__"   # Elastic IP allocation-id
 
 log() { logger "Keepalived: $*"; }
 
-TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/instance-id)
 
 ACTION="$1"
 
 if [[ "$ACTION" == "attach" ]]; then
-  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
+  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" \
+    --network-interface-ids "$ENI_ID" \
+    --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
+
   if [[ "$ATTACHED_TO" != "$INSTANCE_ID" ]]; then
-    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+      --network-interface-ids "$ENI_ID" \
+      --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
     if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
       log "Detaching ENI $ENI_ID from $ATTACHED_TO"
-      aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+      aws ec2 detach-network-interface --region "$REGION" \
+        --attachment-id "$ATTACHMENT_ID" --force
       sleep 5
     fi
+
     log "Attaching ENI $ENI_ID to $INSTANCE_ID"
-    aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI_ID" --instance-id "$INSTANCE_ID" --device-index 1
+    aws ec2 attach-network-interface --region "$REGION" \
+      --network-interface-id "$ENI_ID" \
+      --instance-id "$INSTANCE_ID" \
+      --device-index 1
+    sleep 5
   else
     log "ENI $ENI_ID already attached to this instance"
   fi
+
+  IFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | sort | tail -n1)
+  ip link set "$IFACE" up || true
+
+  if ! ip -br a show dev "$IFACE" | grep -q "$VIP"; then
+    ip addr add "$VIP/24" dev "$IFACE"
+    log "Assigned VIP $VIP/24 to $IFACE"
+  else
+    log "VIP $VIP already present on $IFACE"
+  fi
+
+  log "Associating EIP allocation $ALLOC_ID with ENI $ENI_ID and private IP $VIP"
+  aws ec2 associate-address --region "$REGION" \
+    --allocation-id "$ALLOC_ID" \
+    --network-interface-id "$ENI_ID" \
+    --private-ip-address "$VIP" || true
+
 elif [[ "$ACTION" == "detach" ]]; then
-  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+    --network-interface-ids "$ENI_ID" \
+    --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
   if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
     log "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
-    aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+    aws ec2 detach-network-interface --region "$REGION" \
+      --attachment-id "$ATTACHMENT_ID" --force
   else
     log "ENI $ENI_ID not attached, nothing to do"
   fi
 fi
 EOF
+
 sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__VIP__|$VIP|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__ALLOC_ID__|$ALLOC_ID|g" /etc/keepalived/eni-move.sh
 sudo chmod +x /etc/keepalived/eni-move.sh
 
-# Keepalived config for BACKUP
-cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
+  # Keepalived config
+  cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
 global_defs {
    script_user root
    enable_script_security
@@ -229,20 +293,10 @@ vrrp_instance VI_1 {
         chk_proxysql
     }
 
-    #: Do not preempt the MASTER role, even if this node has a higher priority.
     nopreempt
 
-    #: This sets a delay (in seconds) after becoming MASTER before sending the first GARP. Default is 0.
     garp_master_delay 5
-
-    #: Number of GARP packets to send when transitioning to MASTER. Default is 1.
-    #: This is useful when you have multiple VIPs and want to ensure all ARP caches
-    #: in the network are updated.
     garp_master_repeat 2
-
-    #: Interval (in seconds) between GARP packets.
-    #: The total time to send GARP packets is garp_master_delay + (garp_master_repeat * garp_master_refresh)
-    #: e.g. with the current settings: 5 + (2 * 10) = 25 seconds total
     garp_master_refresh 10
 
     notify_master "/etc/keepalived/eni-move.sh attach"
@@ -251,11 +305,11 @@ vrrp_instance VI_1 {
 }
 EOF
 
-log INFO "Starting keepalived service"
-sudo systemctl enable keepalived >/dev/null 2>&1
-sudo systemctl restart keepalived >/dev/null 2>&1
+  log INFO "Starting keepalived service"
+  sudo systemctl enable keepalived >/dev/null 2>&1
+  sudo systemctl restart keepalived >/dev/null 2>&1
 
-log INFO "BACKUP setup complete. Watching ENI $ENI_ID (Region: $REGION)"
+  log INFO "BACKUP setup complete. ENI ID = $ENI_ID (Region: $REGION)"
 }
 
 main
