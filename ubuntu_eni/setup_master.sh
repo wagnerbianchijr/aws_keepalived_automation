@@ -290,9 +290,9 @@ global_defs {
 
 vrrp_script chk_proxysql {
     script "$(which nc) -z 127.0.0.1 6033"
-    interval 3
-    rise 3
-    fall 3
+    interval 2
+    rise 1
+    fall 2
 }
 
 vrrp_instance VI_1 {
@@ -301,7 +301,6 @@ vrrp_instance VI_1 {
     virtual_router_id 51
     priority 2
     advert_int 1
-    nopreempt
 
     authentication {
         auth_type PASS
@@ -321,8 +320,20 @@ vrrp_instance VI_1 {
         chk_proxysql
     }
 
+    #: Do not preempt the MASTER role, even if this node has a higher priority.
+    nopreempt
+
+    #: This sets a delay (in seconds) after becoming MASTER before sending the first GARP. Default is 0.
     garp_master_delay 5
+
+    #: Number of GARP packets to send when transitioning to MASTER. Default is 1.
+    #: This is useful when you have multiple VIPs and want to ensure all ARP caches
+    #: in the network are updated.
     garp_master_repeat 2
+
+    #: Interval (in seconds) between GARP packets.
+    #: The total time to send GARP packets is garp_master_delay + (garp_master_repeat * garp_master_refresh)
+    #: e.g. with the current settings: 5 + (2 * 10) = 25 seconds total
     garp_master_refresh 10
 
     notify_master "/etc/keepalived/eni-move.sh attach"
