@@ -164,7 +164,7 @@ cat <<EOF
 Please confirm the following inputs:
   AWS Region              : $REGION
   VIP                     : $VIP
-  EIP Allocation ID       : $ALLOCATION_ID
+  EIP Allocation ID       : $ALLO_ID
   Subnet ID               : $SUBNET_ID
   Security Group ID       : $SG_ID
   Backup node Private IP  : $PEER_IP
