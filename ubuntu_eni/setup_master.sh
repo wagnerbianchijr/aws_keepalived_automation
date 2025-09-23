@@ -145,16 +145,17 @@ main() {
   ENI_DESC=${ENI_DESC:-"Readyset.io Keepalived ENI"}
   SUBNET_ID=${SUBNET_ID:-subnet-1ea42441}
   SG_ID=${SG_ID:-sg-0aba3ccd66cf6ea50}
-  PEER_IP=${PEER_IP:-172.31.45.2}
+  ALLOC_ID=${ALLOC_ID:-eipalloc-0f7ce09357b2dec5e}
+  PEER_IP=${PEER_IP:-172.31.37.44}
   IFACE=${IFACE:-ens5}
 
   # Gather user input with defaults
   ask_input "Enter AWS Region (e.g. us-east-1)" REGION
   ask_input "Enter VIP (e.g. 172.31.40.200)" VIP
-  ask_input "Enter ENI description (e.g. Readyset.io Keepalived ENI)" ENI_DESC
+  ask_input "Enter the EIP Allocation ID (e.g. eipalloc-0f7ce09357b2dec5e)" ALLOC_ID
   ask_input "Enter Subnet ID (e.g. subnet-1ea42441)" SUBNET_ID
   ask_input "Enter Security Group ID (e.g. sg-0aba3ccd66cf6ea50)" SG_ID
-  ask_input "Enter Backup node private IP (e.g. 172.31.45.2)" PEER_IP
+  ask_input "Enter Backup node private IP (e.g. 172.31.37.44)" PEER_IP
   ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
 
 # Show all inputs
@@ -163,7 +164,7 @@ cat <<EOF
 Please confirm the following inputs:
   AWS Region              : $REGION
   VIP                     : $VIP
-  ENI description         : $ENI_DESC
+  EIP Allocation ID       : $ALLOCATION_ID
   Subnet ID               : $SUBNET_ID
   Security Group ID       : $SG_ID
   Backup node Private IP  : $PEER_IP
@@ -244,41 +245,83 @@ PATH=/usr/local/bin:/usr/bin:/bin
 
 ENI_ID="__ENI_ID__"
 REGION="__REGION__"
+VIP="__VIP__"
+ALLOC_ID="__ALLOC_ID__"   # Elastic IP allocation-id
 
 log() { logger "Keepalived: $*"; }
 
-TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+# Use IMDSv2 token
+TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+
+INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/instance-id)
 
 ACTION="$1"
 
 if [[ "$ACTION" == "attach" ]]; then
-  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
+  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" \
+    --network-interface-ids "$ENI_ID" \
+    --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
+
   if [[ "$ATTACHED_TO" != "$INSTANCE_ID" ]]; then
-    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+      --network-interface-ids "$ENI_ID" \
+      --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
     if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
       log "Detaching ENI $ENI_ID from $ATTACHED_TO"
-      aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+      aws ec2 detach-network-interface --region "$REGION" \
+        --attachment-id "$ATTACHMENT_ID" --force
       sleep 5
     fi
+
     log "Attaching ENI $ENI_ID to $INSTANCE_ID"
-    aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI_ID" --instance-id "$INSTANCE_ID" --device-index 1
+    aws ec2 attach-network-interface --region "$REGION" \
+      --network-interface-id "$ENI_ID" \
+      --instance-id "$INSTANCE_ID" \
+      --device-index 1
+    sleep 5
   else
     log "ENI $ENI_ID already attached to this instance"
   fi
+
+  # Ensure NIC is up and VIP is assigned
+  IFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | sort | tail -n1)
+  ip link set "$IFACE" up || true
+
+  if ! ip -br a show dev "$IFACE" | grep -q "$VIP"; then
+    ip addr add "$VIP/24" dev "$IFACE"
+    log "Assigned VIP $VIP/24 to $IFACE"
+  else
+    log "VIP $VIP already present on $IFACE"
+  fi
+
+  # --- Ensure EIP is associated with ENI+VIP ---
+  log "Associating EIP allocation $ALLOC_ID with ENI $ENI_ID and private IP $VIP"
+  aws ec2 associate-address --region "$REGION" \
+    --allocation-id "$ALLOC_ID" \
+    --network-interface-id "$ENI_ID" \
+    --private-ip-address "$VIP" || true
+
 elif [[ "$ACTION" == "detach" ]]; then
-  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+    --network-interface-ids "$ENI_ID" \
+    --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
   if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
     log "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
-    aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+    aws ec2 detach-network-interface --region "$REGION" \
+      --attachment-id "$ATTACHMENT_ID" --force
   else
     log "ENI $ENI_ID not attached, nothing to do"
   fi
 fi
 EOF
-  sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
-  sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
-  sudo chmod +x /etc/keepalived/eni-move.sh
+sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__VIP__|$VIP|g" /etc/keepalived/eni-move.sh
+sudo chmod +x /etc/keepalived/eni-move.sh
 
   # Keepalived config
   cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
