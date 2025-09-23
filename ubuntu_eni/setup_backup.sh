@@ -180,7 +180,8 @@ PATH=/usr/local/bin:/usr/bin:/bin
 ENI_ID="__ENI_ID__"
 REGION="__REGION__"
 VIP="__VIP__"
-ALLOC_ID="__ALLOC_ID__"   # Elastic IP allocation-id
+ALLOC_ID="__ALLOC_ID__"
+SUBNET_MASK="__SUBNET_MASK__"
 
 log() { logger "Keepalived: $*"; }
 
@@ -254,6 +255,7 @@ sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__VIP__|$VIP|g" /etc/keepalived/eni-move.sh
 sudo sed -i "s|__ALLOC_ID__|$ALLOC_ID|g" /etc/keepalived/eni-move.sh
+sudo sed -i "s|__SUBNET_MASK__|$SUBNET_MASK|g" /etc/keepalived/eni-move.sh
 sudo chmod +x /etc/keepalived/eni-move.sh
 
   # Keepalived config
