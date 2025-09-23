@@ -296,7 +296,7 @@ vrrp_script chk_proxysql {
 }
 
 vrrp_instance VI_1 {
-    state MASTER
+    state BACKUP
     interface ${IFACE}
     virtual_router_id 51
     priority 2
