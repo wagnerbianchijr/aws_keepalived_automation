@@ -246,88 +246,40 @@ log INFO "Inputs confirmed, let's rock it..."
 set -euo pipefail
 PATH=/usr/local/bin:/usr/bin:/bin
 
-ENI_ID="__ENI_ID__"
 REGION="__REGION__"
-VIP="__VIP__"
+ENI_ID="__ENI_ID__"
 ALLOC_ID="__ALLOC_ID__"
-SUBNET_MASK="__SUBNET_MASK__"
 
 log() { logger "Keepalived: $*"; }
 
-# Use IMDSv2 token
-TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+INSTANCE_ID=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
+  | xargs -I {} curl -s -H "X-aws-ec2-metadata-token: {}" http://169.254.169.254/latest/meta-data/instance-id);
 
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
-  http://169.254.169.254/latest/meta-data/instance-id)
-
-ACTION="$1"
-
-if [[ "$ACTION" == "attach" ]]; then
-  ATTACHED_TO=$(aws ec2 describe-network-interfaces --region "$REGION" \
-    --network-interface-ids "$ENI_ID" \
-    --query 'NetworkInterfaces[0].Attachment.InstanceId' --output text)
-
-  if [[ "$ATTACHED_TO" != "$INSTANCE_ID" ]]; then
-    ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
-      --network-interface-ids "$ENI_ID" \
-      --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-
-    if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
-      log "Detaching ENI $ENI_ID from $ATTACHED_TO"
-      aws ec2 detach-network-interface --region "$REGION" \
-        --attachment-id "$ATTACHMENT_ID" --force
-      sleep 5
-    fi
-
-    log "Attaching ENI $ENI_ID to $INSTANCE_ID"
-    aws ec2 attach-network-interface --region "$REGION" \
-      --network-interface-id "$ENI_ID" \
-      --instance-id "$INSTANCE_ID" \
-      --device-index 1
-    sleep 5
+#: move the eni to this instance
+if [ "ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)" = "None" ]; then
+  log "ENI $ENI is not attached to any instance."
+  exit 1
+else
+  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+  aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+  sleep 5
+  aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI" --instance-id "$INSTANCE_ID" --device-index 1
+  sleep 10
+  if [ $? -ne 0 ]; then
+    log "Failed to attach ENI $ENI to instance $INSTANCE_ID"
+    exit 1
   else
-    log "ENI $ENI_ID already attached to this instance"
-  fi
-
-  # Ensure NIC is up and VIP is assigned
-  IFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | sort | tail -n1)
-  ip link set "$IFACE" up || true
-
-  if ! ip -br a show dev "$IFACE" | grep -q "$VIP"; then
-    ip addr add "$VIP/$SUBNET_MASK" dev "$IFACE"
-    log "Assigned VIP $VIP/$SUBNET_MASK to $IFACE"
-  else
-    log "VIP $VIP/$SUBNET_MASK already present on $IFACE"
-  fi
-
-  # --- Ensure EIP is associated with ENI+VIP ---
-  log "Associating EIP allocation $ALLOC_ID with ENI $ENI_ID and private IP $VIP"
-  aws ec2 associate-address --region "$REGION" \
-    --allocation-id "$ALLOC_ID" \
-    --network-interface-id "$ENI_ID" \
-    --private-ip-address "$VIP" || true
-
-elif [[ "$ACTION" == "detach" ]]; then
-  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
-    --network-interface-ids "$ENI_ID" \
-    --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-
-  if [[ "$ATTACHMENT_ID" != "None" && "$ATTACHMENT_ID" != "null" ]]; then
-    log "Detaching ENI $ENI_ID (Attachment $ATTACHMENT_ID)"
-    aws ec2 detach-network-interface --region "$REGION" \
-      --attachment-id "$ATTACHMENT_ID" --force
-  else
-    log "ENI $ENI_ID not attached, nothing to do"
+    log "Successfully attached ENI $ENI to instance $INSTANCE_ID"
   fi
 fi
 EOF
-sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
-sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
-sudo sed -i "s|__VIP__|$VIP|g" /etc/keepalived/eni-move.sh
-sudo sed -i "s|__ALLOC_ID__|$ALLOC_ID|g" /etc/keepalived/eni-move.sh
-sudo sed -i "s|__SUBNET_MASK__|$SUBNET_MASK|g" /etc/keepalived/eni-move.sh
-sudo chmod +x /etc/keepalived/eni-move.sh
+  # Replace placeholders
+  sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
+  sudo sed -i "s|__ENI_ID__|$ENI_ID|g" /etc/keepalived/eni-move.sh
+  sudo sed -i "s|__ALLOC_ID__|$ALLOC_ID|g" /etc/keepalived/eni-move.sh
+  
+  # Make script executable
+  sudo chmod +x /etc/keepalived/eni-move.sh
 
   # Keepalived config
   cat <<EOF | sudo tee /etc/keepalived/keepalived.conf >/dev/null
