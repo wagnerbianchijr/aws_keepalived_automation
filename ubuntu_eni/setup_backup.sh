@@ -135,7 +135,7 @@ main() {
   VIP=${VIP:-172.31.40.200}
   ALLOC_ID=${ALLOC_ID:-eipalloc-0f7ce09357b2dec5e}
   ENI_ID=${ENI_ID:-eni-xxxxxxxx}    # Must be provided by user
-  PEER_IP=${PEER_IP:-172.31.37.44}
+  PEER_IP=${PEER_IP:-172.31.38.131}
   IFACE=${IFACE:-ens5}
   SUBNET_MASK=${SUBNET_MASK:-20}
 
@@ -144,7 +144,7 @@ main() {
   ask_input "Enter VIP (e.g. 172.31.40.200)" VIP
   ask_input "Enter the ENI ID created by the MASTER (e.g. eni-xxxxxx)" ENI_ID
   ask_input "Enter the EIP Allocation ID (e.g. eipalloc-xxxxxx)" ALLOC_ID
-  ask_input "Enter Backup node private IP (e.g. 172.31.37.44)" PEER_IP
+  ask_input "Enter Master node private IP (e.g. 172.31.38.131)" PEER_IP
   ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
   ask_input "Enter the Primary NIC Subnet Mask (e.g. 20)" SUBNET_MASK
 
