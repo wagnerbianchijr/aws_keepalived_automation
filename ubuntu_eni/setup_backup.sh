@@ -142,8 +142,8 @@ main() {
   # Gather user input with defaults
   ask_input "Enter AWS Region (e.g. us-east-1)" REGION
   ask_input "Enter VIP (e.g. 172.31.40.200)" VIP
-  ask_input "Enter the EIP Allocation ID (e.g. eipalloc-xxxxxx)" ALLOC_ID
   ask_input "Enter the ENI ID created by the MASTER (e.g. eni-xxxxxx)" ENI_ID
+  ask_input "Enter the EIP Allocation ID (e.g. eipalloc-xxxxxx)" ALLOC_ID
   ask_input "Enter Backup node private IP (e.g. 172.31.37.44)" PEER_IP
   ask_input "Enter the Primary NIC Interface name (e.g. ens5)" IFACE
   ask_input "Enter the Primary NIC Subnet Mask (e.g. 20)" SUBNET_MASK
@@ -153,10 +153,10 @@ cat <<EOF
 
 Please confirm the following inputs:
   AWS Region              : $REGION
-  VIP                     : $VIP
-  EIP Allocation ID       : $ALLOC_ID
+  VIP (Private)           : $VIP
   ENI ID (from MASTER)    : $ENI_ID
-  Backup node Private IP  : $PEER_IP
+  EIP Allocation ID       : $ALLOC_ID
+  Master node Private IP  : $PEER_IP
   Primary NIC Interface   : $IFACE
   Subnet Mask / CIDR      : $SUBNET_MASK
 
@@ -298,10 +298,20 @@ vrrp_instance VI_1 {
         chk_proxysql
     }
 
+    #: Do not preempt the MASTER role, even if this node has a higher priority.
     nopreempt
 
+    #: This sets a delay (in seconds) after becoming MASTER before sending the first GARP. Default is 0.
     garp_master_delay 5
+
+    #: Number of GARP packets to send when transitioning to MASTER. Default is 1.
+    #: This is useful when you have multiple VIPs and want to ensure all ARP caches
+    #: in the network are updated.
     garp_master_repeat 2
+
+    #: Interval (in seconds) between GARP packets.
+    #: The total time to send GARP packets is garp_master_delay + (garp_master_repeat * garp_master_refresh)
+    #: e.g. with the current settings: 5 + (2 * 10) = 25 seconds total
     garp_master_refresh 10
 
     notify_master "/etc/keepalived/eni-move.sh attach"
