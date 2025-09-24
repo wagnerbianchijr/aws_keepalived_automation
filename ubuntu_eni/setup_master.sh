@@ -243,35 +243,63 @@ log INFO "Inputs confirmed, let's rock it..."
   # ENI move script
   cat <<'EOF' | sudo tee /etc/keepalived/eni-move.sh >/dev/null
 #!/usr/bin/env bash
+
 set -euo pipefail
+
 PATH=/usr/local/bin:/usr/bin:/bin
 
 REGION="__REGION__"
 ENI_ID="__ENI_ID__"
 ALLOC_ID="__ALLOC_ID__"
 
-log() { logger "Keepalived: $*"; }
-
+log() {
+  if command -v logger >/dev/null 2>&1; then
+    logger -t keepalived.service: "$*"
+  else
+    echo "keepalived.service: $*"
+  fi
+}
+# Get instance-id with IMDSv2
 INSTANCE_ID=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" \
   | xargs -I {} curl -s -H "X-aws-ec2-metadata-token: {}" http://169.254.169.254/latest/meta-data/instance-id);
 
-#: move the eni to this instance
-if [ "ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)" = "None" ]; then
-  log "ENI $ENI is not attached to any instance."
+# Getting the ENI AttachmentId
+ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+  --network-interface-ids "$ENI_ID" \
+  --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
+
+# Detach and re-attach ENI only if attached
+if [[ -n "$ATTACHMENT_ID" && "$ATTACHMENT_ID" != "None" ]]; then
+  aws ec2 detach-network-interface \
+    --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
+  sleep 5
+else
+  log "ENI $ENI_ID is not currently attached, skipping detach."
+fi
+
+# Associate Elastic IP to make sure it follows the ENI, only if not already associated
+CURRENT_ASSOC_ENI=$(aws ec2 describe-addresses --allocation-ids "$ALLOC_ID" --region "$REGION" --query 'Addresses[0].NetworkInterfaceId' --output text)
+if [[ "$CURRENT_ASSOC_ENI" != "$ENI_ID" ]]; then
+  aws ec2 associate-address \
+    --allocation-id "$ALLOC_ID" --network-interface-id "$ENI_ID" --region "$REGION"
+else
+  log "Elastic IP $ALLOC_ID is already associated with ENI $ENI_ID"
+fi
+
+# Attach ENI to this instance
+aws ec2 attach-network-interface \
+  --region "$REGION" --network-interface-id "$ENI_ID" --instance-id "$INSTANCE_ID" --device-index 1
+
+sleep 10
+
+# Check if attach was successful
+if [ $? -ne 0 ]; then
+  log "Failed to attach ENI $ENI to instance $INSTANCE_ID"
   exit 1
 else
-  ATTACHMENT_ID=$(aws ec2 describe-network-interfaces --region "$REGION" --network-interface-ids "$ENI_ID" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text)
-  aws ec2 detach-network-interface --region "$REGION" --attachment-id "$ATTACHMENT_ID" --force
-  sleep 5
-  aws ec2 attach-network-interface --region "$REGION" --network-interface-id "$ENI" --instance-id "$INSTANCE_ID" --device-index 1
-  sleep 10
-  if [ $? -ne 0 ]; then
-    log "Failed to attach ENI $ENI to instance $INSTANCE_ID"
-    exit 1
-  else
-    log "Successfully attached ENI $ENI to instance $INSTANCE_ID"
-  fi
+  log "Successfully attached ENI $ENI to instance $INSTANCE_ID"
 fi
+
 EOF
   # Replace placeholders
   sudo sed -i "s|__REGION__|$REGION|g" /etc/keepalived/eni-move.sh
